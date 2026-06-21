@@ -32,6 +32,8 @@ final class MusicModel: ObservableObject {
     private var currentSongKey = ""
     private var lastArtworkData: Data?
     private var playbackElapsed: TimeInterval = 0
+    private var pendingPlaybackState: (isPlaying: Bool, songKey: String, expiresAt: Date)?
+    private var pendingSeek: (target: TimeInterval, songKey: String, requestedAt: Date, wasPlaying: Bool, expiresAt: Date)?
 
     deinit {
         refreshLoopTask?.cancel()
@@ -52,36 +54,59 @@ final class MusicModel: ObservableObject {
     }
 
     func togglePlayPause() {
-        track.isPlaying.toggle()
+        let requestedState = !track.isPlaying
+        pendingPlaybackState = (
+            isPlaying: requestedState,
+            songKey: lyricKey(for: track),
+            expiresAt: Date().addingTimeInterval(2.5)
+        )
+        track.isPlaying = requestedState
         NetEaseController.sendMediaKey(.playPause)
-        refreshSoon()
+        refreshSoon(after: 0.35)
+        refreshSoon(after: 1.2)
+        refreshSoon(after: 2.4)
     }
 
     func nextTrack() {
+        pendingSeek = nil
         NetEaseController.sendMediaKey(.next)
-        refreshSoon()
+        refreshSoon(after: 0.35)
+        refreshSoon(after: 1.2)
+        refreshSoon(after: 2.4)
     }
 
     func previousTrack() {
+        pendingSeek = nil
         NetEaseController.sendMediaKey(.previous)
-        refreshSoon()
+        refreshSoon(after: 0.35)
+        refreshSoon(after: 1.2)
+        refreshSoon(after: 2.4)
     }
 
     func seek(to target: TimeInterval) {
         let boundedTarget = min(max(0, target), max(duration, 0))
+        pendingSeek = (
+            target: boundedTarget,
+            songKey: lyricKey(for: track),
+            requestedAt: Date(),
+            wasPlaying: track.isPlaying,
+            expiresAt: Date().addingTimeInterval(2.5)
+        )
         playbackElapsed = boundedTarget
         elapsed = boundedTarget
         updateLyric()
         NetEaseController.seek(to: boundedTarget)
-        refreshSoon()
+        refreshSoon(after: 0.35)
+        refreshSoon(after: 1.2)
+        refreshSoon(after: 2.4)
     }
 
     func openNetEaseMusic() {
         NetEaseController.openNetEaseMusic()
     }
 
-    private func refreshSoon() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+    private func refreshSoon(after delay: TimeInterval = 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.refresh()
         }
     }
@@ -98,15 +123,17 @@ final class MusicModel: ObservableObject {
 
     private func apply(_ snapshot: NowPlayingSnapshot) {
         refreshTask = nil
-        playbackElapsed = snapshot.elapsed
-        if isExpanded, abs(elapsed - snapshot.elapsed) > 0.25 {
-            elapsed = snapshot.elapsed
+        let displayElapsed = elapsedForDisplay(from: snapshot)
+        playbackElapsed = displayElapsed
+        if isExpanded, abs(elapsed - displayElapsed) > 0.25 {
+            elapsed = displayElapsed
         }
         if duration != snapshot.duration {
             duration = snapshot.duration
         }
-        if track != snapshot.track {
-            track = snapshot.track
+        let visibleTrack = trackForDisplay(from: snapshot.track)
+        if track != visibleTrack {
+            track = visibleTrack
         }
         if let artworkData = snapshot.artworkData, artworkData != lastArtworkData {
             lastArtworkData = artworkData
@@ -175,8 +202,61 @@ final class MusicModel: ObservableObject {
         }
     }
 
+    private func trackForDisplay(from snapshotTrack: Track) -> Track {
+        guard let pending = pendingPlaybackState else {
+            return snapshotTrack
+        }
+
+        let snapshotKey = lyricKey(for: snapshotTrack)
+        guard Date() < pending.expiresAt, snapshotKey == pending.songKey else {
+            pendingPlaybackState = nil
+            return snapshotTrack
+        }
+
+        if snapshotTrack.isPlaying == pending.isPlaying {
+            pendingPlaybackState = nil
+            return snapshotTrack
+        }
+
+        var visibleTrack = snapshotTrack
+        visibleTrack.isPlaying = pending.isPlaying
+        return visibleTrack
+    }
+
+    private func elapsedForDisplay(from snapshot: NowPlayingSnapshot) -> TimeInterval {
+        guard let pending = pendingSeek else {
+            return snapshot.elapsed
+        }
+
+        let snapshotKey = lyricKey(for: snapshot.track)
+        guard Date() < pending.expiresAt, snapshotKey == pending.songKey else {
+            pendingSeek = nil
+            return snapshot.elapsed
+        }
+
+        let expectedElapsed = expectedSeekElapsed(for: pending, duration: snapshot.duration)
+        if abs(snapshot.elapsed - expectedElapsed) < 1.5 {
+            pendingSeek = nil
+            return snapshot.elapsed
+        }
+
+        return expectedElapsed
+    }
+
+    private func expectedSeekElapsed(
+        for pending: (target: TimeInterval, songKey: String, requestedAt: Date, wasPlaying: Bool, expiresAt: Date),
+        duration: TimeInterval
+    ) -> TimeInterval {
+        let advanced = pending.wasPlaying ? Date().timeIntervalSince(pending.requestedAt) : 0
+        let upperBound = duration > 0 ? duration : .greatestFiniteMagnitude
+        return min(max(0, pending.target + advanced), upperBound)
+    }
+
     private var refreshInterval: TimeInterval {
         if refreshTask != nil {
+            return 1
+        }
+        if pendingPlaybackState != nil || pendingSeek != nil {
             return 1
         }
         if isExpanded || track.isPlaying {
