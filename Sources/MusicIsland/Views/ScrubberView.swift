@@ -5,6 +5,7 @@ import SwiftUI
 struct ScrubberView: View {
     let elapsed: TimeInterval
     let duration: TimeInterval
+    var accent: Color = .white
     let onSeek: (TimeInterval) -> Void
 
     @State private var previewElapsed: TimeInterval?
@@ -21,7 +22,9 @@ struct ScrubberView: View {
                         .fill(.white.opacity(0.18))
                         .frame(height: 5)
                     Capsule()
-                        .fill(.white.opacity(0.82))
+                        .fill(accent)
+                        .brightness(0.18)
+                        .saturation(1.2)
                         .frame(width: width * progress, height: 5)
                     Circle()
                         .fill(.white)

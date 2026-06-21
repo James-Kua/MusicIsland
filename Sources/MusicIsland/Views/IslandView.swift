@@ -13,22 +13,24 @@ struct IslandView: View {
                 ArtworkView(image: model.coverImage, isPlaying: model.track.isPlaying)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.track.title)
-                        .font(.system(size: model.isExpanded ? 15 : 13, weight: .semibold))
-                        .lineLimit(1)
-                    Text(artistText)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    MarqueeText(
+                        text: model.track.title,
+                        font: .system(size: model.isExpanded ? 15 : 13, weight: .semibold),
+                        color: .white
+                    )
+                    MarqueeText(
+                        text: artistText,
+                        font: .system(size: 11, weight: .medium),
+                        color: .white.opacity(0.68)
+                    )
                     if model.isExpanded, !model.track.album.isEmpty {
-                        Text(model.track.album)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary.opacity(0.78))
-                            .lineLimit(1)
+                        MarqueeText(
+                            text: model.track.album,
+                            font: .system(size: 10, weight: .medium),
+                            color: .white.opacity(0.5)
+                        )
                     }
                 }
-
-                Spacer(minLength: 8)
 
                 if model.isExpanded {
                     IslandIconControl(systemName: "backward.fill", action: model.previousTrack)
@@ -38,27 +40,28 @@ struct IslandView: View {
                 }
             }
 
-            if model.isExpanded {
-                ScrubberView(
-                    elapsed: model.elapsed,
-                    duration: model.duration,
-                    onSeek: model.seek(to:)
-                )
+            if model.isExpanded, !isIdle {
+                if model.duration > 0 {
+                    ScrubberView(
+                        elapsed: model.elapsed,
+                        duration: model.duration,
+                        accent: model.accentColor,
+                        onSeek: model.seek(to:)
+                    )
+                }
 
                 VStack(spacing: 3) {
-                    Text(model.lyric)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(1)
+                    lyricLine(
+                        displayLyric,
+                        size: 13,
+                        opacity: 0.92,
+                        loading: model.isLoadingLyrics
+                    )
 
-                    if !model.translatedLyric.isEmpty {
-                        Text(model.translatedLyric)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.64))
-                            .lineLimit(1)
+                    if model.translatedLyric.hasReadableContent {
+                        lyricLine(model.translatedLyric, size: 12, opacity: 0.64, loading: false)
                     }
                 }
-                .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -66,13 +69,12 @@ struct IslandView: View {
         .padding(.horizontal, model.isExpanded ? 18 : 16)
         .padding(.vertical, model.isExpanded ? 14 : 10)
         .frame(width: model.isExpanded ? 520 : 310, height: model.isExpanded ? 154 : 56)
-        .background(.black.opacity(0.88), in: RoundedRectangle(cornerRadius: model.isExpanded ? 28 : 24, style: .continuous))
+        .background(islandBackground)
         .overlay(
             RoundedRectangle(cornerRadius: model.isExpanded ? 28 : 24, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
+                .stroke(.white.opacity(0.14), lineWidth: 1)
         )
         .foregroundStyle(.white)
-        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: model.isExpanded)
         .onHover { hovering in
             setHovering(hovering)
         }
@@ -80,6 +82,50 @@ struct IslandView: View {
 
     private var artistText: String {
         model.track.artist.isEmpty ? "Unknown artist" : model.track.artist
+    }
+
+    private var isIdle: Bool {
+        model.track == Track.empty
+    }
+
+    /// Blanks out lyric lines that are only dashes/symbols so they don't render
+    /// as a stray "long dash"; readable text and placeholders pass through.
+    private var displayLyric: String {
+        model.lyric.hasReadableContent ? model.lyric : ""
+    }
+
+    private var cornerRadius: CGFloat {
+        model.isExpanded ? 28 : 24
+    }
+
+    private var islandBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return ZStack {
+            shape.fill(.black)
+            shape.fill(
+                LinearGradient(
+                    colors: [model.accentColor.opacity(0.55), model.accentColor.opacity(0.14)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+    }
+
+    /// A cross-fading, marquee-scrolling lyric line.
+    private func lyricLine(_ text: String, size: CGFloat, opacity: Double, loading: Bool) -> some View {
+        ZStack {
+            MarqueeText(
+                text: text,
+                font: .system(size: size, weight: .medium),
+                color: .white.opacity(opacity),
+                alignment: .center
+            )
+            .id(text)
+            .transition(.opacity)
+        }
+        .animation(.easeInOut(duration: 0.28), value: text)
+        .shimmering(active: loading)
     }
 
     private func setHovering(_ hovering: Bool) {

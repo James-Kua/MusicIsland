@@ -19,6 +19,7 @@ struct ArtworkView: View {
                         .foregroundStyle(.white.opacity(0.72))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(.white.opacity(0.12))
+                        .shimmering(active: true)
                 }
             }
             .frame(width: 38, height: 38)

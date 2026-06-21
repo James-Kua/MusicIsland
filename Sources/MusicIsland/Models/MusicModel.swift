@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 /// The app's observable state. Polls `NowPlayingBridge`, drives playback
 /// commands through `NetEaseController`, and keeps the displayed lyric in sync
@@ -11,6 +12,7 @@ final class MusicModel: ObservableObject {
     @Published var elapsed: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var coverImage: NSImage?
+    @Published var accentColor: Color = MusicModel.defaultAccent
     @Published var lyric = "Lyrics will appear here"
     @Published var translatedLyric = ""
     @Published var isLoadingLyrics = false
@@ -137,10 +139,13 @@ final class MusicModel: ObservableObject {
         }
         if let artworkData = snapshot.artworkData, artworkData != lastArtworkData {
             lastArtworkData = artworkData
-            coverImage = NSImage(data: artworkData)
+            let image = NSImage(data: artworkData)
+            coverImage = image
+            updateAccentColor(from: image)
         } else if snapshot.track == Track.empty {
             lastArtworkData = nil
             coverImage = nil
+            updateAccentColor(from: nil)
         }
 
         let songKey = lyricKey(for: snapshot.track)
@@ -173,6 +178,15 @@ final class MusicModel: ObservableObject {
                     self.translatedLyric = ""
                 }
             }
+        }
+    }
+
+    static let defaultAccent = Color(red: 0.09, green: 0.09, blue: 0.11)
+
+    private func updateAccentColor(from image: NSImage?) {
+        let resolved = image?.islandAccentColor().map(Color.init(nsColor:)) ?? Self.defaultAccent
+        withAnimation(.easeInOut(duration: 0.5)) {
+            accentColor = resolved
         }
     }
 

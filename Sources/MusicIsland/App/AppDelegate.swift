@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
 
         let trimmed = lyric.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isPlaying, !trimmed.isEmpty, !Self.lyricPlaceholders.contains(trimmed) else {
+        guard isPlaying, trimmed.hasReadableContent, !Self.lyricPlaceholders.contains(trimmed) else {
             button.title = ""
             return
         }
