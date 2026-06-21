@@ -17,32 +17,41 @@ struct MarqueeText: View {
 
     private var overflow: CGFloat { max(0, textSize.width - containerWidth) }
     private var isOverflowing: Bool { overflow > 1 }
+    private var visibleAlignment: Alignment { isOverflowing ? .leading : alignment }
 
     var body: some View {
-        Text(text)
-            .font(font)
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .fixedSize()
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: MarqueeTextSizeKey.self, value: proxy.size)
+        GeometryReader { proxy in
+            Color.clear
+                .overlay(alignment: visibleAlignment) {
+                    Text(text)
+                        .font(font)
+                        .foregroundStyle(color)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .offset(x: isOverflowing && animate ? -overflow : 0)
                 }
-            )
-            .offset(x: isOverflowing && animate ? -overflow : 0)
-            .frame(maxWidth: .infinity, alignment: isOverflowing ? .leading : alignment)
-            .frame(height: textSize.height > 0 ? textSize.height : nil)
-            .clipped()
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: MarqueeWidthKey.self, value: proxy.size.width)
-                }
-            )
-            .onPreferenceChange(MarqueeTextSizeKey.self) { textSize = $0 }
-            .onPreferenceChange(MarqueeWidthKey.self) { containerWidth = $0 }
-            .onChange(of: text) { _ in restart() }
-            .onChange(of: isOverflowing) { _ in restart() }
-            .onAppear { restart() }
+                .onAppear { containerWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { containerWidth = $0 }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: textSize.height > 0 ? textSize.height : nil)
+        .clipped()
+        .background(
+            Text(text)
+                .font(font)
+                .lineLimit(1)
+                .fixedSize()
+                .hidden()
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: MarqueeTextSizeKey.self, value: proxy.size)
+                    }
+                )
+        )
+        .onPreferenceChange(MarqueeTextSizeKey.self) { textSize = $0 }
+        .onChange(of: text) { _ in restart() }
+        .onChange(of: isOverflowing) { _ in restart() }
+        .onAppear { restart() }
     }
 
     private func restart() {
@@ -65,9 +74,4 @@ struct MarqueeText: View {
 private struct MarqueeTextSizeKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
-}
-
-private struct MarqueeWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
