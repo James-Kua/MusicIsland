@@ -36,9 +36,13 @@ final class MusicModel: ObservableObject {
     private var playbackElapsed: TimeInterval = 0
     private var pendingPlaybackState: (isPlaying: Bool, songKey: String, expiresAt: Date)?
     private var pendingSeek: (target: TimeInterval, songKey: String, requestedAt: Date, wasPlaying: Bool, expiresAt: Date)?
+    private var displayTickTask: Task<Void, Never>?
+    private var elapsedAnchor: TimeInterval = 0
+    private var elapsedAnchorAt = Date()
 
     deinit {
         refreshLoopTask?.cancel()
+        displayTickTask?.cancel()
         lyricTask?.cancel()
         refreshTask?.cancel()
     }
@@ -53,6 +57,31 @@ final class MusicModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: nanoseconds)
             }
         }
+        // Advance the displayed position from a smooth local clock between polls
+        // so the scrubber ticks continuously instead of hopping each refresh.
+        displayTickTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self else { return }
+                self.tickDisplay()
+            }
+        }
+    }
+
+    /// The position projected forward from the last snapshot using wall-clock time.
+    private var projectedElapsed: TimeInterval {
+        guard track.isPlaying else { return elapsedAnchor }
+        let projected = elapsedAnchor + Date().timeIntervalSince(elapsedAnchorAt)
+        return duration > 0 ? min(projected, duration) : projected
+    }
+
+    private func tickDisplay() {
+        let value = projectedElapsed
+        playbackElapsed = value
+        if abs(elapsed - value) > 0.05 {
+            elapsed = value
+        }
+        updateLyric()
     }
 
     func togglePlayPause() {
@@ -94,6 +123,8 @@ final class MusicModel: ObservableObject {
             wasPlaying: track.isPlaying,
             expiresAt: Date().addingTimeInterval(2.5)
         )
+        elapsedAnchor = boundedTarget
+        elapsedAnchorAt = Date()
         playbackElapsed = boundedTarget
         elapsed = boundedTarget
         updateLyric()
@@ -125,17 +156,25 @@ final class MusicModel: ObservableObject {
 
     private func apply(_ snapshot: NowPlayingSnapshot) {
         refreshTask = nil
-        let displayElapsed = elapsedForDisplay(from: snapshot)
-        playbackElapsed = displayElapsed
-        if isExpanded, abs(elapsed - displayElapsed) > 0.25 {
-            elapsed = displayElapsed
-        }
         if duration != snapshot.duration {
             duration = snapshot.duration
         }
         let visibleTrack = trackForDisplay(from: snapshot.track)
         if track != visibleTrack {
             track = visibleTrack
+        }
+
+        // Resync the smooth local clock to the polled snapshot only when they
+        // diverge enough to signal a real seek/skip — routine polling jitter is
+        // left to the local tick so the scrubber doesn't jump.
+        let displayElapsed = elapsedForDisplay(from: snapshot)
+        if !track.isPlaying || abs(projectedElapsed - displayElapsed) > 1.5 {
+            elapsedAnchor = displayElapsed
+            elapsedAnchorAt = Date()
+            playbackElapsed = displayElapsed
+            if isExpanded {
+                elapsed = displayElapsed
+            }
         }
         if let artworkData = snapshot.artworkData, artworkData != lastArtworkData {
             lastArtworkData = artworkData
