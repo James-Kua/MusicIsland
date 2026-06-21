@@ -8,36 +8,11 @@ struct IslandView: View {
     weak var windowController: IslandWindowController?
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                ArtworkView(image: model.coverImage, isPlaying: model.track.isPlaying)
+        VStack(spacing: model.isExpanded ? 7 : 10) {
+            trackSummary
 
-                VStack(alignment: .leading, spacing: 2) {
-                    MarqueeText(
-                        text: model.track.title,
-                        font: .system(size: model.isExpanded ? 15 : 13, weight: .semibold),
-                        color: .white
-                    )
-                    MarqueeText(
-                        text: artistText,
-                        font: .system(size: 11, weight: .medium),
-                        color: .white.opacity(0.68)
-                    )
-                    if model.isExpanded, !model.track.album.isEmpty {
-                        MarqueeText(
-                            text: model.track.album,
-                            font: .system(size: 10, weight: .medium),
-                            color: .white.opacity(0.5)
-                        )
-                    }
-                }
-
-                if model.isExpanded {
-                    IslandIconControl(systemName: "backward.fill", action: model.previousTrack)
-                    IslandIconControl(systemName: model.track.isPlaying ? "pause.fill" : "play.fill", action: model.togglePlayPause)
-                    IslandIconControl(systemName: "forward.fill", action: model.nextTrack)
-                    IslandIconControl(systemName: "music.note", action: model.openNetEaseMusic)
-                }
+            if model.isExpanded {
+                playbackControls
             }
 
             if model.isExpanded, !isIdle {
@@ -68,7 +43,7 @@ struct IslandView: View {
         }
         .padding(.horizontal, model.isExpanded ? 18 : 16)
         .padding(.vertical, model.isExpanded ? 14 : 10)
-        .frame(width: model.isExpanded ? 520 : 310, height: model.isExpanded ? 154 : 56)
+        .frame(width: model.isExpanded ? 520 : 310, height: model.isExpanded ? 184 : 56)
         .background(islandBackground)
         .overlay(
             RoundedRectangle(cornerRadius: model.isExpanded ? 28 : 24, style: .continuous)
@@ -110,6 +85,43 @@ struct IslandView: View {
                 )
             )
         }
+    }
+
+    private var trackSummary: some View {
+        HStack(spacing: 10) {
+            ArtworkView(image: model.coverImage, isPlaying: model.track.isPlaying)
+
+            VStack(alignment: .leading, spacing: 2) {
+                MarqueeText(
+                    text: model.track.title,
+                    font: .system(size: model.isExpanded ? 15 : 13, weight: .semibold),
+                    color: .white
+                )
+                MarqueeText(
+                    text: artistText,
+                    font: .system(size: 11, weight: .medium),
+                    color: .white.opacity(0.68)
+                )
+                if model.isExpanded, !model.track.album.isEmpty {
+                    MarqueeText(
+                        text: model.track.album,
+                        font: .system(size: 10, weight: .medium),
+                        color: .white.opacity(0.5)
+                    )
+                }
+            }
+        }
+    }
+
+    private var playbackControls: some View {
+        HStack(spacing: 18) {
+            IslandIconControl(systemName: "backward.fill", action: model.previousTrack)
+            IslandIconControl(systemName: model.track.isPlaying ? "pause.fill" : "play.fill", action: model.togglePlayPause)
+            IslandIconControl(systemName: "forward.fill", action: model.nextTrack)
+            IslandIconControl(systemName: "music.note", action: model.openNetEaseMusic)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 30)
     }
 
     /// A cross-fading, marquee-scrolling lyric line.

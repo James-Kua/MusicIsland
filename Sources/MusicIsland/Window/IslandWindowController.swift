@@ -5,7 +5,7 @@ import SwiftUI
 /// shows it on hover, and collapses it after a short delay once the pointer
 /// leaves both the icon and the window.
 final class IslandWindowController: NSWindowController {
-    private static let expandedSize = NSSize(width: 520, height: 154)
+    private static let expandedSize = NSSize(width: 520, height: 184)
     private let model: MusicModel
     private var collapseTask: Task<Void, Never>?
 
