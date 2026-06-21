@@ -2,9 +2,9 @@ import AppKit
 import Combine
 import Foundation
 
-/// The app's observable state. Polls `NowPlayingBridge` once per second, drives
-/// playback commands through `NetEaseController`, and keeps the displayed lyric
-/// in sync with the current playback position.
+/// The app's observable state. Polls `NowPlayingBridge`, drives playback
+/// commands through `NetEaseController`, and keeps the displayed lyric in sync
+/// with the current playback position.
 @MainActor
 final class MusicModel: ObservableObject {
     @Published var track = Track.empty
@@ -14,22 +14,39 @@ final class MusicModel: ObservableObject {
     @Published var lyric = "Lyrics will appear here"
     @Published var translatedLyric = ""
     @Published var isLoadingLyrics = false
-    @Published var isExpanded = false
+    @Published var isExpanded = false {
+        didSet {
+            if isExpanded, abs(elapsed - playbackElapsed) > 0.25 {
+                elapsed = playbackElapsed
+            }
+        }
+    }
 
     private let nowPlaying = NowPlayingBridge()
     private let netEase = NetEaseMusicClient()
-    private var timer: Timer?
+    private var refreshLoopTask: Task<Void, Never>?
     private var lyricLines: [LyricLine] = []
     private var lyricTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var lastLyricLookupKey = ""
     private var currentSongKey = ""
+    private var lastArtworkData: Data?
+    private var playbackElapsed: TimeInterval = 0
+
+    deinit {
+        refreshLoopTask?.cancel()
+        lyricTask?.cancel()
+        refreshTask?.cancel()
+    }
 
     func start() {
-        refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh()
+        guard refreshLoopTask == nil else { return }
+        refreshLoopTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.refresh()
+                let nanoseconds = UInt64(self.refreshInterval * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
             }
         }
     }
@@ -52,6 +69,7 @@ final class MusicModel: ObservableObject {
 
     func seek(to target: TimeInterval) {
         let boundedTarget = min(max(0, target), max(duration, 0))
+        playbackElapsed = boundedTarget
         elapsed = boundedTarget
         updateLyric()
         NetEaseController.seek(to: boundedTarget)
@@ -80,12 +98,21 @@ final class MusicModel: ObservableObject {
 
     private func apply(_ snapshot: NowPlayingSnapshot) {
         refreshTask = nil
-        elapsed = snapshot.elapsed
-        duration = snapshot.duration
-        track = snapshot.track
-        if let artworkData = snapshot.artworkData {
+        playbackElapsed = snapshot.elapsed
+        if isExpanded, abs(elapsed - snapshot.elapsed) > 0.25 {
+            elapsed = snapshot.elapsed
+        }
+        if duration != snapshot.duration {
+            duration = snapshot.duration
+        }
+        if track != snapshot.track {
+            track = snapshot.track
+        }
+        if let artworkData = snapshot.artworkData, artworkData != lastArtworkData {
+            lastArtworkData = artworkData
             coverImage = NSImage(data: artworkData)
         } else if snapshot.track == Track.empty {
+            lastArtworkData = nil
             coverImage = nil
         }
 
@@ -128,12 +155,36 @@ final class MusicModel: ObservableObject {
 
     private func updateLyric() {
         guard !lyricLines.isEmpty else {
-            translatedLyric = ""
+            setDisplayedLyric(lyric, translated: "")
             return
         }
-        let active = lyricLines.last { $0.time <= elapsed }
+        let active = lyricLines.last { $0.time <= playbackElapsed }
         let line = active ?? lyricLines.first
-        lyric = line?.text.isEmpty == false ? line!.text : lyricLines.first?.text ?? ""
-        translatedLyric = line?.translatedText ?? ""
+        setDisplayedLyric(
+            line?.text.isEmpty == false ? line!.text : lyricLines.first?.text ?? "",
+            translated: line?.translatedText ?? ""
+        )
+    }
+
+    private func setDisplayedLyric(_ text: String, translated: String) {
+        if lyric != text {
+            lyric = text
+        }
+        if translatedLyric != translated {
+            translatedLyric = translated
+        }
+    }
+
+    private var refreshInterval: TimeInterval {
+        if refreshTask != nil {
+            return 1
+        }
+        if isExpanded || track.isPlaying {
+            return 1
+        }
+        if track == Track.empty {
+            return 3
+        }
+        return 4
     }
 }

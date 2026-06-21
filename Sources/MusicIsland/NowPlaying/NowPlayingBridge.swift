@@ -13,6 +13,8 @@ final class NowPlayingBridge: @unchecked Sendable {
     private let copyInfo: CopyNowPlayingInfo?
     private let getPID: GetNowPlayingApplicationPID?
     private var cachedSnapshot = NowPlayingSnapshot(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
+    private var lastHelperSuccess: Date?
+    private let helperCooldown: TimeInterval = 2
 
     init() {
         handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW)
@@ -74,7 +76,7 @@ final class NowPlayingBridge: @unchecked Sendable {
         let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
 
         guard !title.isEmpty else {
-            cachedSnapshot = helperSnapshot() ?? netEaseFallback() ?? .init(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
+            cachedSnapshot = throttledHelperSnapshot() ?? netEaseFallback() ?? .init(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
             return cachedSnapshot
         }
 
@@ -95,6 +97,16 @@ final class NowPlayingBridge: @unchecked Sendable {
 
     /// Runs the now-playing probe in a fresh `swift` interpreter process. This is
     /// a fallback for cases where the in-process MediaRemote call returns nothing.
+    private func throttledHelperSnapshot() -> NowPlayingSnapshot? {
+        let now = Date()
+        if let lastHelperSuccess, now.timeIntervalSince(lastHelperSuccess) < helperCooldown {
+            return cachedSnapshot.track.title == Track.empty.title ? nil : cachedSnapshot
+        }
+        guard let snapshot = helperSnapshot() else { return nil }
+        lastHelperSuccess = now
+        return snapshot
+    }
+
     private func helperSnapshot() -> NowPlayingSnapshot? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
