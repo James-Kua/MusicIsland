@@ -82,8 +82,8 @@ final class NetEaseMusicClient {
         var components = URLComponents(string: "https://music.163.com/api/song/lyric")
         components?.queryItems = [
             .init(name: "id", value: "\(songID)"),
-            .init(name: "lv", value: "1"),
-            .init(name: "kv", value: "1"),
+            .init(name: "lv", value: "-1"),
+            .init(name: "kv", value: "-1"),
             .init(name: "tv", value: "-1")
         ]
         guard let url = components?.url else { return [] }
