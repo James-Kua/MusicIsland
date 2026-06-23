@@ -118,12 +118,11 @@ final class NowPlayingBridge: @unchecked Sendable {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return nil
         }
 
-        guard process.terminationStatus == 0 else { return nil }
+        guard ProcessRunner.run(process, timeout: 2.5) else { return nil }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard

@@ -22,6 +22,10 @@ final class StatusItemHoverController: NSObject {
         self.activeWindowFrame = activeWindowFrame
     }
 
+    deinit {
+        hoverTimer?.invalidate()
+    }
+
     func attach(to button: NSStatusBarButton?) {
         guard let button else { return }
         self.button = button

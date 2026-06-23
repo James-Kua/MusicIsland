@@ -8,7 +8,18 @@ if [[ -n "${SDKROOT:-}" && ! -d "$SDKROOT" ]]; then
   unset SDKROOT
 fi
 
-swift build
+run_swift() {
+  mkdir -p .build/swift-home .build/clang-module-cache .build/swiftpm-cache .build/swiftpm-config .build/swiftpm-security
+  HOME="$PWD/.build/swift-home" \
+    CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-module-cache" \
+    swift "$@" \
+      --disable-sandbox \
+      --cache-path "$PWD/.build/swiftpm-cache" \
+      --config-path "$PWD/.build/swiftpm-config" \
+      --security-path "$PWD/.build/swiftpm-security"
+}
+
+run_swift build
 pkill -x MusicIsland 2>/dev/null || true
 
 APP_DIR=".build/MusicIsland.app"
@@ -58,4 +69,4 @@ else
   codesign --force --sign - "$APP_DIR"
 fi
 
-open "$APP_DIR"
+open "$PWD/$APP_DIR"

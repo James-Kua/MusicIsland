@@ -117,10 +117,26 @@ struct IslandView: View {
 
     private var playbackControls: some View {
         HStack(spacing: 18) {
-            IslandIconControl(systemName: "backward.fill", action: model.previousTrack)
-            IslandIconControl(systemName: model.track.isPlaying ? "pause.fill" : "play.fill", action: model.togglePlayPause)
-            IslandIconControl(systemName: "forward.fill", action: model.nextTrack)
-            IslandIconControl(systemName: "music.note", action: model.openNetEaseMusic)
+            IslandIconControl(
+                systemName: "backward.fill",
+                accessibilityLabel: "Previous track",
+                action: model.previousTrack
+            )
+            IslandIconControl(
+                systemName: model.track.isPlaying ? "pause.fill" : "play.fill",
+                accessibilityLabel: model.track.isPlaying ? "Pause" : "Play",
+                action: model.togglePlayPause
+            )
+            IslandIconControl(
+                systemName: "forward.fill",
+                accessibilityLabel: "Next track",
+                action: model.nextTrack
+            )
+            IslandIconControl(
+                systemName: "music.note",
+                accessibilityLabel: "Open NetEase Music",
+                action: model.openNetEaseMusic
+            )
         }
         .frame(maxWidth: .infinity)
         .frame(height: 30)

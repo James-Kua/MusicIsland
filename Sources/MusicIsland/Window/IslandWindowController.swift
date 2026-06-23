@@ -30,7 +30,6 @@ final class IslandWindowController: NSWindowController {
         window.isOpaque = false
         window.hasShadow = true
         window.ignoresMouseEvents = false
-        window.contentView = NSHostingView(rootView: IslandView(model: model, windowController: nil))
 
         super.init(window: window)
         window.contentView = NSHostingView(rootView: IslandView(model: model, windowController: self))
@@ -79,7 +78,7 @@ final class IslandWindowController: NSWindowController {
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let size = Self.expandedSize
         let x = min(max(anchorFrame.midX - size.width / 2, screenFrame.minX + 8), screenFrame.maxX - size.width - 8)
-        let y = anchorFrame.minY - size.height - 8
+        let y = max(screenFrame.minY + 8, anchorFrame.minY - size.height - 8)
 
         window.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
     }

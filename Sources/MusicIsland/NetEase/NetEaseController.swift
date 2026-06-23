@@ -38,8 +38,11 @@ enum NetEaseController {
     }
 
     static func seek(to target: TimeInterval) {
+        guard target.isFinite else { return }
         sendSeekCommand(to: target)
-        runInterpreterSeek(to: target)
+        Task.detached(priority: .utility) {
+            runInterpreterSeek(to: target)
+        }
     }
 
     private static func sendSeekCommand(to target: TimeInterval) {
@@ -74,7 +77,7 @@ enum NetEaseController {
         process.standardError = Pipe()
         do {
             try process.run()
-            process.waitUntilExit()
+            ProcessRunner.run(process, timeout: 2.5)
         } catch {
             return
         }

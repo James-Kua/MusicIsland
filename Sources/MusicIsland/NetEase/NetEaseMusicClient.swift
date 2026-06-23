@@ -7,6 +7,8 @@ final class NetEaseMusicClient {
 
     init() {
         let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 6
+        configuration.timeoutIntervalForResource = 12
         configuration.httpAdditionalHeaders = [
             "User-Agent": "Mozilla/5.0 MusicIsland",
             "Referer": "https://music.163.com/"
@@ -32,7 +34,8 @@ final class NetEaseMusicClient {
         guard let url = components?.url else { return nil }
 
         do {
-            let (data, _) = try await session.data(from: url)
+            let (data, response) = try await session.data(from: url)
+            guard Self.isSuccessfulHTTPResponse(response) else { return nil }
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let result = json?["result"] as? [String: Any]
             let songs = result?["songs"] as? [[String: Any]]
@@ -89,7 +92,8 @@ final class NetEaseMusicClient {
         guard let url = components?.url else { return [] }
 
         do {
-            let (data, _) = try await session.data(from: url)
+            let (data, response) = try await session.data(from: url)
+            guard Self.isSuccessfulHTTPResponse(response) else { return [] }
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             let lyricContainer = json?["lrc"] as? [String: Any]
             let lyric = lyricContainer?["lyric"] as? String ?? ""
@@ -99,5 +103,10 @@ final class NetEaseMusicClient {
         } catch {
             return []
         }
+    }
+
+    private static func isSuccessfulHTTPResponse(_ response: URLResponse) -> Bool {
+        guard let httpResponse = response as? HTTPURLResponse else { return true }
+        return (200..<300).contains(httpResponse.statusCode)
     }
 }

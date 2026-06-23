@@ -190,6 +190,10 @@ final class MusicModel: ObservableObject {
         let songKey = lyricKey(for: snapshot.track)
         if songKey != currentSongKey {
             currentSongKey = songKey
+            lyricTask?.cancel()
+            lyricTask = nil
+            lastLyricLookupKey = ""
+            isLoadingLyrics = false
             lyricLines = []
             lyric = snapshot.track.title == Track.empty.title ? "Lyrics will appear here" : "Finding lyrics..."
             translatedLyric = ""
@@ -204,11 +208,12 @@ final class MusicModel: ObservableObject {
         guard track.title != Track.empty.title, key != lastLyricLookupKey else { return }
         lastLyricLookupKey = key
 
-        lyricTask?.cancel()
         isLoadingLyrics = true
-        lyricTask = Task { [netEase] in
-            let lines = await netEase.lyrics(title: track.title, artist: track.artist)
-            await MainActor.run {
+        lyricTask = Task { [weak self, netEase, key, title = track.title, artist = track.artist] in
+            let lines = await netEase.lyrics(title: title, artist: artist)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.currentSongKey == key else { return }
                 self.isLoadingLyrics = false
                 self.lyricLines = lines
                 self.updateLyric()
@@ -216,6 +221,7 @@ final class MusicModel: ObservableObject {
                     self.lyric = "No synced lyric found"
                     self.translatedLyric = ""
                 }
+                self.lyricTask = nil
             }
         }
     }
@@ -240,8 +246,9 @@ final class MusicModel: ObservableObject {
         }
         let active = lyricLines.last { $0.time <= playbackElapsed }
         let line = active ?? lyricLines.first
+        let text = line?.text.isEmpty == false ? line?.text ?? "" : lyricLines.first?.text ?? ""
         setDisplayedLyric(
-            line?.text.isEmpty == false ? line!.text : lyricLines.first?.text ?? "",
+            text,
             translated: line?.translatedText ?? ""
         )
     }

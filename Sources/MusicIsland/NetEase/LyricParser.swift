@@ -37,13 +37,12 @@ enum LyricParser {
     }
 
     private static func parseLine(_ line: String) -> [LyricLine] {
-        let pattern = #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        guard let regex = timestampRegex else { return [] }
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
         let matches = regex.matches(in: line, range: range)
-        guard !matches.isEmpty else { return [] }
+        guard let lastMatch = matches.last else { return [] }
 
-        let textStart = matches.last!.range.location + matches.last!.range.length
+        let textStart = lastMatch.range.location + lastMatch.range.length
         let text = String(line[line.index(line.startIndex, offsetBy: textStart)...])
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -65,4 +64,8 @@ enum LyricParser {
             return LyricLine(time: minutes * 60 + seconds + fraction, text: text, translatedText: nil)
         }
     }
+
+    private static let timestampRegex = try? NSRegularExpression(
+        pattern: #"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]"#
+    )
 }
