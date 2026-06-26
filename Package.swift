@@ -14,6 +14,11 @@ let package = Package(
         .executableTarget(
             name: "MusicIsland",
             path: "Sources/MusicIsland"
+        ),
+        .testTarget(
+            name: "MusicIslandTests",
+            dependencies: ["MusicIsland"],
+            path: "Tests/MusicIslandTests"
         )
     ]
 )

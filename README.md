@@ -51,6 +51,20 @@ To just build the binary:
 swift build
 ```
 
+### Testing
+
+Run the deterministic unit tests with:
+
+```bash
+swift test
+```
+
+Lyric matching also has optional network fixtures that fetch YouTube oEmbed metadata, query NetEase search, and verify the selected NetEase title for known edge cases. These tests are skipped by default so local and CI runs do not depend on live external services. To run them explicitly:
+
+```bash
+MUSICISLAND_RUN_NETWORK_TESTS=1 swift test --filter NetEaseVideoIntegrationTests
+```
+
 ### Code signing
 
 The script signs with an Apple Development identity if one is available, and falls back to ad-hoc signing otherwise. To pick a specific identity:
