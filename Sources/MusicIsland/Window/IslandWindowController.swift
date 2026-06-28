@@ -7,9 +7,10 @@ import SwiftUI
 final class IslandWindowController: NSWindowController {
     private static let expandedSize = NSSize(width: 520, height: 184)
     private let model: MusicModel
+    private let onOpenPreferences: () -> Void
     private var collapseTask: Task<Void, Never>?
 
-    init(model: MusicModel) {
+    init(model: MusicModel, onOpenPreferences: @escaping () -> Void) {
         let screenFrame = NSScreen.main?.visibleFrame ?? .init(x: 0, y: 0, width: 1440, height: 900)
         let compactSize = Self.expandedSize
         let origin = NSPoint(
@@ -17,6 +18,7 @@ final class IslandWindowController: NSWindowController {
             y: screenFrame.maxY - compactSize.height - 10
         )
         self.model = model
+        self.onOpenPreferences = onOpenPreferences
 
         let window = IslandWindow(
             contentRect: NSRect(origin: origin, size: compactSize),
@@ -30,10 +32,14 @@ final class IslandWindowController: NSWindowController {
         window.isOpaque = false
         window.hasShadow = true
         window.ignoresMouseEvents = false
-        window.contentView = NSHostingView(rootView: IslandView(model: model, windowController: nil))
+        window.contentView = NSHostingView(
+            rootView: IslandView(model: model, windowController: nil, onOpenPreferences: onOpenPreferences)
+        )
 
         super.init(window: window)
-        window.contentView = NSHostingView(rootView: IslandView(model: model, windowController: self))
+        window.contentView = NSHostingView(
+            rootView: IslandView(model: model, windowController: self, onOpenPreferences: onOpenPreferences)
+        )
     }
 
     required init?(coder: NSCoder) {

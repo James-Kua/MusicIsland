@@ -6,6 +6,7 @@ import SwiftUI
 struct IslandView: View {
     @ObservedObject var model: MusicModel
     weak var windowController: IslandWindowController?
+    let onOpenPreferences: () -> Void
 
     var body: some View {
         VStack(spacing: model.isExpanded ? 7 : 10) {
@@ -111,8 +112,20 @@ struct IslandView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if model.isExpanded {
+                utilityControls
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var utilityControls: some View {
+        HStack(spacing: 8) {
+            IslandIconControl(systemName: "music.note", action: model.openNetEaseMusic)
+            IslandIconControl(systemName: "gearshape.fill", action: onOpenPreferences)
+        }
+        .opacity(0.78)
     }
 
     private var playbackControls: some View {
@@ -120,7 +133,6 @@ struct IslandView: View {
             IslandIconControl(systemName: "backward.fill", action: model.previousTrack)
             IslandIconControl(systemName: model.track.isPlaying ? "pause.fill" : "play.fill", action: model.togglePlayPause)
             IslandIconControl(systemName: "forward.fill", action: model.nextTrack)
-            IslandIconControl(systemName: "music.note", action: model.openNetEaseMusic)
         }
         .frame(maxWidth: .infinity)
         .frame(height: 30)
