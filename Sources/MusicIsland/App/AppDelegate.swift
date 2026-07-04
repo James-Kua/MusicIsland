@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var islandController: IslandWindowController?
     private var preferencesController: PreferencesWindowController?
     private var statusItem: NSStatusItem?
+    private var statusView: StatusItemView?
     private var statusHoverController: StatusItemHoverController?
     private var model: MusicModel?
     private let settings = AppSettings()
@@ -37,10 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installStatusItem(controller: IslandWindowController) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "MusicIsland")
-        item.button?.imagePosition = .imageLeading
-        item.button?.imageHugsTitle = true
+        let view = StatusItemView()
+        view.autoresizingMask = [.width, .height]
+        item.button?.image = nil
+        item.button?.title = ""
         item.button?.wantsLayer = true
+        item.button?.addSubview(view)
 
         let hoverController = StatusItemHoverController(
             onEnter: { [weak controller, weak item] in
@@ -57,7 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hoverController.attach(to: item.button)
 
         statusItem = item
+        statusView = view
         statusHoverController = hoverController
+        updateStatusItemLength()
     }
 
     /// Mirror the live lyric into the menu bar (beside the icon) while playing.
@@ -87,7 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ]
 
     private func updateStatusTitle(lyric: String, isPlaying: Bool) {
-        guard let button = statusItem?.button else { return }
         latestStatusLyric = lyric
         latestStatusIsPlaying = isPlaying
 
@@ -96,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               isPlaying,
               trimmed.hasReadableContent,
               !Self.lyricPlaceholders.contains(trimmed) else {
-            clearStatusLyric(on: button)
+            clearStatusLyric()
             return
         }
 
@@ -104,38 +108,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let display = trimmed.count > maxCharacters
             ? trimmed.prefix(maxCharacters - 1).trimmingCharacters(in: .whitespaces) + "…"
             : trimmed
-        applyStatusLyric(display, to: button)
+        applyStatusLyric(display)
     }
 
-    private func applyStatusLyric(_ lyric: String, to button: NSStatusBarButton) {
-        let text = "  \(lyric) "
-        button.attributedTitle = NSAttributedString(
-            string: text,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: settings.menuBarLyricFontSize, weight: .medium),
-                .foregroundColor: NSColor.labelColor,
-                .kern: 0.05,
-            ]
+    private func applyStatusLyric(_ lyric: String) {
+        statusView?.update(
+            lyric: lyric,
+            fontSize: settings.menuBarLyricFontSize,
+            backgroundStyle: settings.menuBarLyricBackgroundStyle,
+            backgroundColor: settings.menuBarLyricBackgroundColor,
+            backgroundOpacity: settings.menuBarLyricBackgroundOpacity
         )
-        switch settings.menuBarLyricBackgroundStyle {
-        case .pill:
-            button.layer?.backgroundColor = NSColor.controlAccentColor
-                .withAlphaComponent(settings.menuBarLyricBackgroundOpacity)
-                .cgColor
-        case .plain:
-            button.layer?.backgroundColor = NSColor.clear.cgColor
-        }
-        button.layer?.cornerRadius = 8
-        button.layer?.masksToBounds = true
+        updateStatusItemLength()
     }
 
-    private func clearStatusLyric(on button: NSStatusBarButton) {
-        button.attributedTitle = NSAttributedString(string: "")
-        button.title = ""
-        button.layer?.backgroundColor = NSColor.clear.cgColor
+    private func clearStatusLyric() {
+        statusView?.update(
+            lyric: nil,
+            fontSize: settings.menuBarLyricFontSize,
+            backgroundStyle: settings.menuBarLyricBackgroundStyle,
+            backgroundColor: settings.menuBarLyricBackgroundColor,
+            backgroundOpacity: settings.menuBarLyricBackgroundOpacity
+        )
+        updateStatusItemLength()
     }
 
     private func refreshStatusTitle() {
         updateStatusTitle(lyric: latestStatusLyric, isPlaying: latestStatusIsPlaying)
+    }
+
+    private func updateStatusItemLength() {
+        guard let statusItem, let statusView else { return }
+        let size = statusView.intrinsicContentSize
+        statusItem.length = size.width
+        statusView.frame = NSRect(origin: .zero, size: size)
     }
 }

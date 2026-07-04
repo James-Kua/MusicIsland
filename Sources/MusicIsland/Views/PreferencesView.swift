@@ -18,9 +18,51 @@ struct PreferencesView: View {
                 }
                 .pickerStyle(.segmented)
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Color")
+
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.fixed(24), spacing: 8), count: 8),
+                        alignment: .leading,
+                        spacing: 8
+                    ) {
+                        ForEach(MenuBarLyricBackgroundColor.allCases) { color in
+                            Button {
+                                settings.menuBarLyricBackgroundColor = color
+                                settings.menuBarLyricBackgroundStyle = .pill
+                                settings.menuBarLyricBackgroundOpacity = max(settings.menuBarLyricBackgroundOpacity, 0.45)
+                            } label: {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(color.swiftUIColor)
+                                    .frame(width: 24, height: 24)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .stroke(
+                                                settings.menuBarLyricBackgroundColor == color
+                                                    ? Color.primary
+                                                    : Color.primary.opacity(0.14),
+                                                lineWidth: settings.menuBarLyricBackgroundColor == color ? 2 : 1
+                                            )
+                                    }
+                                    .overlay {
+                                        if settings.menuBarLyricBackgroundColor == color {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 11, weight: .bold))
+                                                .foregroundStyle(.primary)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(color.title)
+                        }
+                    }
+                    .disabled(settings.menuBarLyricBackgroundStyle == .plain)
+                    .opacity(settings.menuBarLyricBackgroundStyle == .plain ? 0.45 : 1)
+                }
+
                 HStack {
                     Text("Opacity")
-                    Slider(value: $settings.menuBarLyricBackgroundOpacity, in: 0.06...0.36)
+                    Slider(value: $settings.menuBarLyricBackgroundOpacity, in: 0.2...0.8)
                         .disabled(settings.menuBarLyricBackgroundStyle == .plain)
                     Text("\(Int(settings.menuBarLyricBackgroundOpacity * 100))%")
                         .foregroundStyle(.secondary)
@@ -69,7 +111,7 @@ struct PreferencesView: View {
     private var previewBackground: some View {
         if settings.menuBarLyricBackgroundStyle == .pill {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.accentColor.opacity(settings.menuBarLyricBackgroundOpacity))
+                .fill(settings.menuBarLyricBackgroundColor.swiftUIColor.opacity(settings.menuBarLyricBackgroundOpacity))
         }
     }
 }

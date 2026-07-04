@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import SwiftUI
 
 enum MenuBarLyricBackgroundStyle: String, CaseIterable, Identifiable {
     case pill
@@ -16,11 +17,80 @@ enum MenuBarLyricBackgroundStyle: String, CaseIterable, Identifiable {
     }
 }
 
+enum MenuBarLyricBackgroundColor: String, CaseIterable, Identifiable {
+    case blush
+    case peach
+    case butter
+    case mint
+    case seafoam
+    case sky
+    case lavender
+    case lilac
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .blush:
+            "Blush"
+        case .peach:
+            "Peach"
+        case .butter:
+            "Butter"
+        case .mint:
+            "Mint"
+        case .seafoam:
+            "Seafoam"
+        case .sky:
+            "Sky"
+        case .lavender:
+            "Lavender"
+        case .lilac:
+            "Lilac"
+        }
+    }
+
+    private var components: (red: Double, green: Double, blue: Double) {
+        switch self {
+        case .blush:
+            (1.00, 0.72, 0.78)
+        case .peach:
+            (1.00, 0.79, 0.63)
+        case .butter:
+            (1.00, 0.91, 0.57)
+        case .mint:
+            (0.72, 0.91, 0.67)
+        case .seafoam:
+            (0.62, 0.91, 0.84)
+        case .sky:
+            (0.62, 0.82, 1.00)
+        case .lavender:
+            (0.77, 0.73, 1.00)
+        case .lilac:
+            (0.91, 0.72, 1.00)
+        }
+    }
+
+    var swiftUIColor: Color {
+        Color(red: components.red, green: components.green, blue: components.blue)
+    }
+
+    var nsColor: NSColor {
+        NSColor(
+            calibratedRed: components.red,
+            green: components.green,
+            blue: components.blue,
+            alpha: 1
+        )
+    }
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     private enum Key {
         static let showMenuBarLyrics = "showMenuBarLyrics"
         static let menuBarLyricBackgroundStyle = "menuBarLyricBackgroundStyle"
+        static let menuBarLyricBackgroundColor = "menuBarLyricBackgroundColor"
         static let menuBarLyricBackgroundOpacity = "menuBarLyricBackgroundOpacity"
         static let menuBarLyricFontSize = "menuBarLyricFontSize"
         static let menuBarLyricMaxCharacters = "menuBarLyricMaxCharacters"
@@ -34,6 +104,10 @@ final class AppSettings: ObservableObject {
 
     @Published var menuBarLyricBackgroundStyle: MenuBarLyricBackgroundStyle {
         didSet { defaults.set(menuBarLyricBackgroundStyle.rawValue, forKey: Key.menuBarLyricBackgroundStyle) }
+    }
+
+    @Published var menuBarLyricBackgroundColor: MenuBarLyricBackgroundColor {
+        didSet { defaults.set(menuBarLyricBackgroundColor.rawValue, forKey: Key.menuBarLyricBackgroundColor) }
     }
 
     @Published var menuBarLyricBackgroundOpacity: Double {
@@ -54,10 +128,12 @@ final class AppSettings: ObservableObject {
         showMenuBarLyrics = defaults.object(forKey: Key.showMenuBarLyrics) as? Bool ?? true
         let styleValue = defaults.string(forKey: Key.menuBarLyricBackgroundStyle) ?? MenuBarLyricBackgroundStyle.pill.rawValue
         menuBarLyricBackgroundStyle = MenuBarLyricBackgroundStyle(rawValue: styleValue) ?? .pill
+        let colorValue = defaults.string(forKey: Key.menuBarLyricBackgroundColor) ?? MenuBarLyricBackgroundColor.sky.rawValue
+        menuBarLyricBackgroundColor = MenuBarLyricBackgroundColor(rawValue: colorValue) ?? .sky
         menuBarLyricBackgroundOpacity = Self.double(
             forKey: Key.menuBarLyricBackgroundOpacity,
-            in: 0.06...0.36,
-            defaultValue: 0.16,
+            in: 0.2...0.8,
+            defaultValue: 0.55,
             defaults: defaults
         )
         menuBarLyricFontSize = Self.double(

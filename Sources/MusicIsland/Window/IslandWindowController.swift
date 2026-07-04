@@ -53,12 +53,12 @@ final class IslandWindowController: NSWindowController {
         return window.frame
     }
 
-    func showExpanded(anchoredTo button: NSStatusBarButton) {
+    func showExpanded(anchoredTo anchorView: NSView) {
         collapseTask?.cancel()
         guard let window else { return }
 
         model.isExpanded = true
-        positionWindow(anchoredTo: button)
+        positionWindow(anchoredTo: anchorView)
         showWindow(nil)
         window.orderFrontRegardless()
     }
@@ -77,10 +77,10 @@ final class IslandWindowController: NSWindowController {
         collapseTask?.cancel()
     }
 
-    private func positionWindow(anchoredTo button: NSStatusBarButton) {
-        guard let window, let buttonWindow = button.window else { return }
+    private func positionWindow(anchoredTo anchorView: NSView) {
+        guard let window, let buttonWindow = anchorView.window else { return }
 
-        let buttonFrame = button.convert(button.bounds, to: nil)
+        let buttonFrame = anchorView.convert(anchorView.bounds, to: nil)
         let anchorFrame = buttonWindow.convertToScreen(buttonFrame)
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let size = Self.expandedSize

@@ -7,7 +7,7 @@ final class StatusItemHoverController: NSObject {
     private let onEnter: () -> Void
     private let onExit: () -> Void
     private let activeWindowFrame: () -> NSRect?
-    private weak var button: NSStatusBarButton?
+    private weak var statusView: NSView?
     private var trackingArea: NSTrackingArea?
     private var hoverTimer: Timer?
     private var isHovering = false
@@ -22,16 +22,16 @@ final class StatusItemHoverController: NSObject {
         self.activeWindowFrame = activeWindowFrame
     }
 
-    func attach(to button: NSStatusBarButton?) {
-        guard let button else { return }
-        self.button = button
+    func attach(to statusView: NSView?) {
+        guard let statusView else { return }
+        self.statusView = statusView
         let area = NSTrackingArea(
-            rect: button.bounds,
+            rect: statusView.bounds,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
-        button.addTrackingArea(area)
+        statusView.addTrackingArea(area)
         trackingArea = area
         startHoverPolling()
     }
@@ -52,9 +52,9 @@ final class StatusItemHoverController: NSObject {
     }
 
     private func pollHover() {
-        guard let button, let buttonWindow = button.window else { return }
+        guard let statusView, let buttonWindow = statusView.window else { return }
         let mouse = NSEvent.mouseLocation
-        let buttonFrame = button.convert(button.bounds, to: nil)
+        let buttonFrame = statusView.convert(statusView.bounds, to: nil)
         let screenFrame = buttonWindow.convertToScreen(buttonFrame).insetBy(dx: -6, dy: -6)
 
         // Treat the pointer as still hovering while it is over the button or
