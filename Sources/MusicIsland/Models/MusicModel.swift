@@ -238,10 +238,13 @@ final class MusicModel: ObservableObject {
             setDisplayedLyric(lyric, translated: "")
             return
         }
-        let active = lyricLines.last { $0.time <= playbackElapsed }
-        let line = active ?? lyricLines.first
+        // Pick the most recent line at or before the playhead that actually has
+        // words. NetEase LRC files include timed lines with empty text to mark
+        // gaps/interludes; when the playhead sits in such a gap we keep showing
+        // the previous sung line instead of falling back to the first line.
+        let line = lyricLines.last { $0.time <= playbackElapsed && $0.text.hasReadableContent }
         setDisplayedLyric(
-            line?.text.isEmpty == false ? line!.text : lyricLines.first?.text ?? "",
+            line?.text ?? "",
             translated: line?.translatedText ?? ""
         )
     }
