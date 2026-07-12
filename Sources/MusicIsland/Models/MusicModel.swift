@@ -33,6 +33,8 @@ final class MusicModel: ObservableObject {
     private var lastLyricLookupKey = ""
     private var currentSongKey = ""
     private var lastArtworkData: Data?
+    private var artworkColorTask: Task<Void, Never>?
+    private var artworkGeneration = 0
     private var playbackElapsed: TimeInterval = 0
     private var pendingPlaybackState: (isPlaying: Bool, songKey: String, expiresAt: Date)?
     private var pendingSeek: (target: TimeInterval, songKey: String, requestedAt: Date, wasPlaying: Bool, expiresAt: Date)?
@@ -45,6 +47,7 @@ final class MusicModel: ObservableObject {
         displayTickTask?.cancel()
         lyricTask?.cancel()
         refreshTask?.cancel()
+        artworkColorTask?.cancel()
     }
 
     func start() {
@@ -180,9 +183,11 @@ final class MusicModel: ObservableObject {
             lastArtworkData = artworkData
             let image = NSImage(data: artworkData)
             coverImage = image
-            updateAccentColor(from: image)
+            updateAccentColorAsync(from: artworkData)
         } else if snapshot.track == Track.empty {
             lastArtworkData = nil
+            artworkGeneration += 1
+            artworkColorTask?.cancel()
             coverImage = nil
             updateAccentColor(from: nil)
         }
@@ -208,7 +213,9 @@ final class MusicModel: ObservableObject {
         isLoadingLyrics = true
         lyricTask = Task { [netEase] in
             let lines = await netEase.lyrics(title: track.title, artist: track.artist)
+            guard !Task.isCancelled, key == self.currentSongKey else { return }
             await MainActor.run {
+                guard key == self.currentSongKey else { return }
                 self.isLoadingLyrics = false
                 self.lyricLines = lines
                 self.updateLyric()
@@ -221,6 +228,46 @@ final class MusicModel: ObservableObject {
     }
 
     static let defaultAccent = Color(red: 0.09, green: 0.09, blue: 0.11)
+
+    private func updateAccentColorAsync(from data: Data) {
+        artworkGeneration += 1
+        let generation = artworkGeneration
+        artworkColorTask?.cancel()
+
+        artworkColorTask = Task.detached(priority: .utility) { [weak self, data] in
+            guard !Task.isCancelled else { return }
+            var components: (red: Double, green: Double, blue: Double)?
+            if let color = NSImage(data: data)?.islandAccentColor()?.usingColorSpace(.deviceRGB) {
+                var red: CGFloat = 0
+                var green: CGFloat = 0
+                var blue: CGFloat = 0
+                var alpha: CGFloat = 0
+                color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+                components = (Double(red), Double(green), Double(blue))
+            }
+            guard !Task.isCancelled else { return }
+
+            await self?.applyArtworkAccent(
+                red: components?.red,
+                green: components?.green,
+                blue: components?.blue,
+                generation: generation
+            )
+        }
+    }
+
+    private func applyArtworkAccent(red: Double?, green: Double?, blue: Double?, generation: Int) {
+        guard generation == artworkGeneration else { return }
+        let resolved: Color
+        if let red, let green, let blue {
+            resolved = Color(red: red, green: green, blue: blue)
+        } else {
+            resolved = Self.defaultAccent
+        }
+        withAnimation(.easeInOut(duration: 0.5)) {
+            accentColor = resolved
+        }
+    }
 
     private func updateAccentColor(from image: NSImage?) {
         let resolved = image?.islandAccentColor().map(Color.init(nsColor:)) ?? Self.defaultAccent

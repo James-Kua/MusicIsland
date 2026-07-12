@@ -1,6 +1,8 @@
 import AppKit
 
 extension NSImage {
+    private static let islandColorContext = CIContext(options: [.workingColorSpace: NSNull()])
+
     /// Average artwork color, tuned into a vivid-but-dark tint that stays legible
     /// behind white text. Used to color the island background and scrubber.
     func islandAccentColor() -> NSColor? {
@@ -13,7 +15,6 @@ extension NSImage {
         let extent = ciImage.extent
         guard extent.width > 0, extent.height > 0 else { return nil }
 
-        let context = CIContext(options: [.workingColorSpace: NSNull()])
         guard
             let filter = CIFilter(
                 name: "CIAreaAverage",
@@ -26,7 +27,7 @@ extension NSImage {
         else { return nil }
 
         var pixel = [UInt8](repeating: 0, count: 4)
-        context.render(
+        Self.islandColorContext.render(
             output,
             toBitmap: &pixel,
             rowBytes: 4,

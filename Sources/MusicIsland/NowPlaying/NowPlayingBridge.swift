@@ -13,8 +13,11 @@ final class NowPlayingBridge: @unchecked Sendable {
     private let copyInfo: CopyNowPlayingInfo?
     private let getPID: GetNowPlayingApplicationPID?
     private var cachedSnapshot = NowPlayingSnapshot(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
-    private var lastHelperSuccess: Date?
+    private var lastHelperAttempt: Date?
+    private var consecutiveHelperFailures = 0
     private let helperCooldown: TimeInterval = 2
+    private let failedHelperCooldown: TimeInterval = 30
+    private let helperFailureThreshold = 3
 
     init() {
         handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW)
@@ -99,11 +102,18 @@ final class NowPlayingBridge: @unchecked Sendable {
     /// a fallback for cases where the in-process MediaRemote call returns nothing.
     private func throttledHelperSnapshot() -> NowPlayingSnapshot? {
         let now = Date()
-        if let lastHelperSuccess, now.timeIntervalSince(lastHelperSuccess) < helperCooldown {
+        let cooldown = consecutiveHelperFailures >= helperFailureThreshold
+            ? failedHelperCooldown
+            : helperCooldown
+        if let lastHelperAttempt, now.timeIntervalSince(lastHelperAttempt) < cooldown {
             return cachedSnapshot.track.title == Track.empty.title ? nil : cachedSnapshot
         }
-        guard let snapshot = helperSnapshot() else { return nil }
-        lastHelperSuccess = now
+        lastHelperAttempt = now
+        guard let snapshot = helperSnapshot() else {
+            consecutiveHelperFailures += 1
+            return nil
+        }
+        consecutiveHelperFailures = 0
         return snapshot
     }
 
