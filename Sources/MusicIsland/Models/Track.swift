@@ -1,7 +1,7 @@
 import Foundation
 
 /// The currently playing track as surfaced to the UI.
-struct Track: Equatable {
+struct Track: Equatable, Sendable {
     var title: String
     var artist: String
     var album: String

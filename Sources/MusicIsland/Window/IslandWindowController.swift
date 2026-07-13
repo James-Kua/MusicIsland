@@ -5,14 +5,16 @@ import SwiftUI
 /// shows it on hover, and collapses it after a short delay once the pointer
 /// leaves both the icon and the window.
 final class IslandWindowController: NSWindowController {
-    private static let expandedSize = NSSize(width: 520, height: 220)
+    private static let standardSize = NSSize(width: 520, height: 220)
+    private static let queueSize = NSSize(width: 520, height: 390)
     private let model: MusicModel
     private let onOpenPreferences: () -> Void
     private var collapseTask: Task<Void, Never>?
+    private weak var anchorView: NSView?
 
     init(model: MusicModel, onOpenPreferences: @escaping () -> Void) {
         let screenFrame = NSScreen.main?.visibleFrame ?? .init(x: 0, y: 0, width: 1440, height: 900)
-        let compactSize = Self.expandedSize
+        let compactSize = Self.standardSize
         let origin = NSPoint(
             x: screenFrame.maxX - compactSize.width - 12,
             y: screenFrame.maxY - compactSize.height - 10
@@ -57,6 +59,7 @@ final class IslandWindowController: NSWindowController {
         collapseTask?.cancel()
         guard let window else { return }
 
+        self.anchorView = anchorView
         model.isExpanded = true
         positionWindow(anchoredTo: anchorView)
         showWindow(nil)
@@ -68,6 +71,7 @@ final class IslandWindowController: NSWindowController {
         collapseTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
+            model.closeUpcomingQueue()
             model.isExpanded = false
             window?.orderOut(nil)
         }
@@ -77,13 +81,19 @@ final class IslandWindowController: NSWindowController {
         collapseTask?.cancel()
     }
 
+    func toggleUpcomingQueue() {
+        model.toggleUpcomingQueue()
+        guard let anchorView else { return }
+        positionWindow(anchoredTo: anchorView)
+    }
+
     private func positionWindow(anchoredTo anchorView: NSView) {
         guard let window, let buttonWindow = anchorView.window else { return }
 
         let buttonFrame = anchorView.convert(anchorView.bounds, to: nil)
         let anchorFrame = buttonWindow.convertToScreen(buttonFrame)
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-        let size = Self.expandedSize
+        let size = model.isShowingQueue ? Self.queueSize : Self.standardSize
         let x = min(max(anchorFrame.midX - size.width / 2, screenFrame.minX + 8), screenFrame.maxX - size.width - 8)
         let y = anchorFrame.minY - size.height - 8
 

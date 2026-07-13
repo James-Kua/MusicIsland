@@ -17,6 +17,8 @@ final class MusicModel: ObservableObject {
     @Published var translatedLyric = ""
     @Published var nextLyric = ""
     @Published var isLoadingLyrics = false
+    @Published var isShowingQueue = false
+    @Published var upcomingQueue: UpcomingQueueState = .idle
     @Published var isExpanded = false {
         didSet {
             if isExpanded, abs(elapsed - playbackElapsed) > 0.25 {
@@ -27,6 +29,7 @@ final class MusicModel: ObservableObject {
 
     private let nowPlaying = NowPlayingBridge()
     private let netEase = NetEaseMusicClient()
+    private let queueProvider = UpcomingQueueProvider()
     private var refreshLoopTask: Task<Void, Never>?
     private var lyricLines: [LyricLine] = []
     private var lyricTask: Task<Void, Never>?
@@ -40,6 +43,7 @@ final class MusicModel: ObservableObject {
     private var pendingPlaybackState: (isPlaying: Bool, songKey: String, expiresAt: Date)?
     private var pendingSeek: (target: TimeInterval, songKey: String, requestedAt: Date, wasPlaying: Bool, expiresAt: Date)?
     private var displayTickTask: Task<Void, Never>?
+    private var queueTask: Task<Void, Never>?
     private var elapsedAnchor: TimeInterval = 0
     private var elapsedAnchorAt = Date()
 
@@ -49,6 +53,7 @@ final class MusicModel: ObservableObject {
         lyricTask?.cancel()
         refreshTask?.cancel()
         artworkColorTask?.cancel()
+        queueTask?.cancel()
     }
 
     func start() {
@@ -142,6 +147,39 @@ final class MusicModel: ObservableObject {
         NetEaseController.openNetEaseMusic()
     }
 
+    func toggleUpcomingQueue() {
+        isShowingQueue.toggle()
+        if isShowingQueue {
+            refreshUpcomingQueue()
+        } else {
+            queueTask?.cancel()
+            queueTask = nil
+            upcomingQueue = .idle
+        }
+    }
+
+    func closeUpcomingQueue() {
+        guard isShowingQueue else { return }
+        isShowingQueue = false
+        queueTask?.cancel()
+        queueTask = nil
+        upcomingQueue = .idle
+    }
+
+    func refreshUpcomingQueue() {
+        guard isShowingQueue else { return }
+        queueTask?.cancel()
+        upcomingQueue = .loading
+        let requestedTrack = track
+        let requestedKey = lyricKey(for: requestedTrack)
+        queueTask = Task { [queueProvider] in
+            let state = await queueProvider.queue(for: requestedTrack)
+            guard !Task.isCancelled, requestedKey == self.lyricKey(for: self.track) else { return }
+            self.upcomingQueue = state
+            self.queueTask = nil
+        }
+    }
+
     private func refreshSoon(after delay: TimeInterval = 0.2) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.refresh()
@@ -200,6 +238,9 @@ final class MusicModel: ObservableObject {
             lyric = snapshot.track.title == Track.empty.title ? "Lyrics will appear here" : "Finding lyrics..."
             translatedLyric = ""
             nextLyric = ""
+            if isShowingQueue {
+                refreshUpcomingQueue()
+            }
             fetchLyricsIfNeeded(for: snapshot.track)
         }
 
