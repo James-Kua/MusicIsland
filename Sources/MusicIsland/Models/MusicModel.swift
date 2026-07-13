@@ -15,6 +15,7 @@ final class MusicModel: ObservableObject {
     @Published var accentColor: Color = MusicModel.defaultAccent
     @Published var lyric = "Lyrics will appear here"
     @Published var translatedLyric = ""
+    @Published var nextLyric = ""
     @Published var isLoadingLyrics = false
     @Published var isExpanded = false {
         didSet {
@@ -198,6 +199,7 @@ final class MusicModel: ObservableObject {
             lyricLines = []
             lyric = snapshot.track.title == Track.empty.title ? "Lyrics will appear here" : "Finding lyrics..."
             translatedLyric = ""
+            nextLyric = ""
             fetchLyricsIfNeeded(for: snapshot.track)
         }
 
@@ -222,6 +224,7 @@ final class MusicModel: ObservableObject {
                 if lines.isEmpty {
                     self.lyric = "No synced lyric found"
                     self.translatedLyric = ""
+                    self.nextLyric = ""
                 }
             }
         }
@@ -282,18 +285,23 @@ final class MusicModel: ObservableObject {
 
     private func updateLyric() {
         guard !lyricLines.isEmpty else {
+            setNextLyric("")
             setDisplayedLyric(lyric, translated: "")
             return
         }
-        // Pick the most recent line at or before the playhead that actually has
-        // words. NetEase LRC files include timed lines with empty text to mark
-        // gaps/interludes; when the playhead sits in such a gap we keep showing
-        // the previous sung line instead of falling back to the first line.
-        let line = lyricLines.last { $0.time <= playbackElapsed && $0.text.hasReadableContent }
+
+        let window = lyricLines.lyricWindow(at: playbackElapsed)
+        setNextLyric(window.next?.text ?? "")
         setDisplayedLyric(
-            line?.text ?? "",
-            translated: line?.translatedText ?? ""
+            window.current?.text ?? "",
+            translated: window.current?.translatedText ?? ""
         )
+    }
+
+    private func setNextLyric(_ text: String) {
+        if nextLyric != text {
+            nextLyric = text
+        }
     }
 
     private func setDisplayedLyric(_ text: String, translated: String) {

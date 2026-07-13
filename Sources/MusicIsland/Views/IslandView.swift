@@ -26,17 +26,19 @@ struct IslandView: View {
                     )
                 }
 
-                VStack(spacing: 3) {
-                    lyricLine(
+                VStack(spacing: 4) {
+                    contextLyricLine(
                         displayLyric,
-                        size: 13,
-                        opacity: 0.92,
+                        position: .current,
                         loading: model.isLoadingLyrics
                     )
 
                     if model.translatedLyric.hasReadableContent {
-                        lyricLine(model.translatedLyric, size: 12, opacity: 0.64, loading: false)
+                        contextLyricLine(model.translatedLyric, position: .translation)
                     }
+
+                    contextLyricLine(model.nextLyric, position: .surrounding)
+                        .padding(.top, model.translatedLyric.hasReadableContent ? 5 : 0)
                 }
                 .frame(maxWidth: .infinity)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -44,7 +46,7 @@ struct IslandView: View {
         }
         .padding(.horizontal, model.isExpanded ? 18 : 16)
         .padding(.vertical, model.isExpanded ? 14 : 10)
-        .frame(width: model.isExpanded ? 520 : 310, height: model.isExpanded ? 184 : 56)
+        .frame(width: model.isExpanded ? 520 : 310, height: model.isExpanded ? 220 : 56)
         .background(islandBackground)
         .overlay(
             RoundedRectangle(cornerRadius: model.isExpanded ? 28 : 24, style: .continuous)
@@ -138,18 +140,49 @@ struct IslandView: View {
         .frame(height: 30)
     }
 
-    /// A cross-fading, marquee-scrolling lyric line.
-    private func lyricLine(_ text: String, size: CGFloat, opacity: Double, loading: Bool) -> some View {
+    private enum LyricPosition {
+        case surrounding
+        case current
+        case translation
+
+        var size: CGFloat {
+            switch self {
+            case .surrounding: 11
+            case .current: 14
+            case .translation: 11
+            }
+        }
+
+        var weight: Font.Weight {
+            self == .current ? .semibold : .medium
+        }
+
+        var opacity: Double {
+            switch self {
+            case .surrounding: 0.38
+            case .current: 0.96
+            case .translation: 0.62
+            }
+        }
+    }
+
+    /// A cross-fading, marquee-scrolling line in the expanded lyric context.
+    private func contextLyricLine(
+        _ text: String,
+        position: LyricPosition,
+        loading: Bool = false
+    ) -> some View {
         ZStack {
             MarqueeText(
                 text: text,
-                font: .system(size: size, weight: .medium),
-                color: .white.opacity(opacity),
+                font: .system(size: position.size, weight: position.weight),
+                color: .white.opacity(position.opacity),
                 alignment: .center
             )
             .id(text)
             .transition(.opacity)
         }
+        .frame(height: position == .current ? 18 : 14)
         .animation(.easeInOut(duration: 0.28), value: text)
         .shimmering(active: loading)
     }

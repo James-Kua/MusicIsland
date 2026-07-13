@@ -25,7 +25,7 @@ On first launch, grant **Accessibility** access when prompted (see [Permissions]
 - **Live lyrics in the menu bar** — the current lyric line appears beside the menu bar icon while music plays.
 - **Hover-to-expand island** — hovering the icon reveals a floating island with album artwork, track info, and a seek scrubber. It stays open while your pointer is over it.
 - **Playback controls** — play/pause, next, previous, and scrub-to-position.
-- **Time-synced lyrics** — lyrics (with translations when available) are fetched from NetEase and advanced in time with playback.
+- **Time-synced lyrics** — lyrics (with translations when available) are fetched from NetEase and advanced in time with playback. The expanded island shows the current and next readable lines for context.
 - **System now-playing integration** — reads title, artist, album, artwork, elapsed time, and duration from macOS's private `MediaRemote` framework, with fallbacks for resilience.
 - **Works with YouTube and other sources** — anything that reports to macOS's now-playing controls (e.g. YouTube in a browser) shows up in the island. Note that lyrics are matched against NetEase's catalog by title/artist, so lyric availability and timing are **not guaranteed** for non-NetEase sources.
 - **Menu bar only** — runs as an agent (`LSUIElement`), so there's no Dock icon or stray window.
