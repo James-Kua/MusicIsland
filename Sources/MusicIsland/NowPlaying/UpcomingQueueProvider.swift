@@ -29,20 +29,37 @@ final class UpcomingQueueProvider: @unchecked Sendable {
             return .unavailable("The browser playing YouTube could not be found.")
         }
 
-        let snapshot = AccessibilitySnapshot(application: app)
-        guard let pageURL = snapshot.webPageURLs.first(where: YouTubeQueueParser.isWatchURL) else {
-            return .unavailable("Open the playing YouTube tab to read its playlist.")
-        }
+        // Browsers build their accessibility tree lazily after the manual
+        // accessibility flags are set, so the very first scan often sees an
+        // empty tree. Rescan briefly instead of failing the first open.
+        var lastState = UpcomingQueueState.unavailable("Open the playing YouTube tab to read its playlist.")
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                Thread.sleep(forTimeInterval: 0.45)
+            }
+            let snapshot = AccessibilitySnapshot(application: app)
+            guard let pageURL = snapshot.webPageURLs.first(where: YouTubeQueueParser.isWatchURL) else {
+                lastState = .unavailable("Open the playing YouTube tab to read its playlist.")
+                continue
+            }
 
-        let items = YouTubeQueueParser.upcomingItems(
-            currentURL: pageURL,
-            links: snapshot.links,
-            limit: 5
-        )
-        guard !items.isEmpty else {
-            return .unavailable("No upcoming YouTube playlist items were found. Start a playlist and try again.")
+            let items = YouTubeQueueParser.upcomingItems(
+                currentURL: pageURL,
+                links: snapshot.links,
+                limit: 5
+            )
+            if !items.isEmpty {
+                return .loaded(source: "YouTube", items: items)
+            }
+
+            let isPlaylist = URLComponents(url: pageURL, resolvingAgainstBaseURL: false)?
+                .queryValue(named: "list")?.isEmpty == false
+            guard isPlaylist else {
+                return .unavailable("The playing YouTube video is not part of a playlist.")
+            }
+            lastState = .unavailable("No upcoming YouTube playlist items were found. Start a playlist and try again.")
         }
-        return .loaded(source: "YouTube", items: items)
+        return lastState
     }
 
     private func netEaseQueue(for track: Track) -> UpcomingQueueState {
@@ -68,6 +85,19 @@ final class UpcomingQueueProvider: @unchecked Sendable {
             rowGroups: snapshot.rowGroups,
             limit: 5
         )
+
+        // The Electron accessibility tree is built lazily, so the first scan
+        // after enabling manual accessibility can come back empty. Rescan once
+        // before concluding the queue is missing.
+        if items.isEmpty, snapshot.rowGroups.isEmpty {
+            Thread.sleep(forTimeInterval: 0.45)
+            snapshot = AccessibilitySnapshot(application: app, targetRowText: track.title)
+            items = NetEaseQueueParser.upcomingItems(
+                after: track.title,
+                rowGroups: snapshot.rowGroups,
+                limit: 5
+            )
+        }
 
         // NetEase commonly keeps the queue outside the accessibility tree until
         // its queue button is opened. Press it only after a read-only scan fails.
@@ -442,10 +472,11 @@ private final class AccessibilitySnapshot {
     ) {
         root = AXUIElementCreateApplication(application.processIdentifier)
         self.targetRowText = targetRowText
-        if application.localizedName?.localizedCaseInsensitiveContains("Chrome") == true {
-            AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-            AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
-        }
+        // Chromium-based apps (Chrome, Arc, Edge, Brave, Electron players) only
+        // expose their web content after these flags are set; other apps ignore
+        // the unknown attributes, so setting them unconditionally is safe.
+        AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
         scan(root, depth: 0)
     }
 
