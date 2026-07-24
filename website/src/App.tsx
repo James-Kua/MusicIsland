@@ -9,7 +9,12 @@ import {
   Menu,
   Moon,
   Music2,
+  Pause,
   Play,
+  RefreshCw,
+  Settings,
+  SkipBack,
+  SkipForward,
   Sun,
   X,
 } from "lucide-react";
@@ -195,6 +200,144 @@ function Hero() {
   );
 }
 
+function MenuBarLyricMockup() {
+  return (
+    <div
+      className="lyric-mockup"
+      role="img"
+      aria-label="MusicIsland showing a live lyric in the macOS menu bar while other work stays open"
+    >
+      <div className="mock-menu-bar">
+        <div className="mock-menu-left" aria-hidden="true">
+          <span className="mock-apple">M</span>
+          <strong>Notes</strong>
+          <span>File</span>
+          <span>Edit</span>
+          <span>View</span>
+        </div>
+        <div className="mock-menu-right">
+          <div className="mock-lyric-pill">
+            <Music2 size={14} strokeWidth={2.5} />
+            <span>So let&apos;s rap, we&apos;ll catch up to par, what&apos;s the haps?</span>
+          </div>
+          <span className="mock-status-text" aria-hidden="true">
+            10:09
+          </span>
+          <span className="mock-battery" aria-hidden="true">
+            <i />
+          </span>
+        </div>
+      </div>
+
+      <div className="mock-lyric-callout">
+        <span>
+          <i /> Live lyric
+        </span>
+        <strong>Right where you&apos;re already looking.</strong>
+        <p>Follows the song in real time, then gets out of your way.</p>
+      </div>
+    </div>
+  );
+}
+
+const mockQueue = [
+  {
+    title: "Haru Haru",
+    artist: "BIGBANG · 4:17",
+    art: "blue",
+  },
+  {
+    title: "Greatest Time",
+    artist: "MC Mong · 4:03",
+    art: "red",
+  },
+  {
+    title: "Bubble Love",
+    artist: "Release · 3:40",
+    art: "pink",
+  },
+  {
+    title: "Tell Me Why",
+    artist: "Free Style · 4:41",
+    art: "gold",
+  },
+];
+
+function ExpandedPlayerMockup() {
+  return (
+    <div
+      className="player-mockup"
+      role="img"
+      aria-label="Expanded MusicIsland player with artwork, playback controls, and an Up Next queue"
+    >
+      <div className="mock-player-island">
+        <div className="mock-player-summary">
+          <div className="mock-player-art">
+            <span>II</span>
+            <i />
+          </div>
+          <div className="mock-player-track">
+            <strong>Luv (sic) Pt2</strong>
+            <span>Oma · Topic</span>
+            <small>Modal Soul Classics II</small>
+          </div>
+          <div className="mock-player-utilities" aria-hidden="true">
+            <span className="active">
+              <ListMusic size={14} />
+            </span>
+            <span>
+              <Music2 size={14} />
+            </span>
+            <span>
+              <Settings size={14} />
+            </span>
+          </div>
+        </div>
+
+        <div className="mock-player-controls" aria-hidden="true">
+          <span>
+            <SkipBack size={15} fill="currentColor" />
+          </span>
+          <span className="primary">
+            <Pause size={15} fill="currentColor" />
+          </span>
+          <span>
+            <SkipForward size={15} fill="currentColor" />
+          </span>
+        </div>
+
+        <div className="mock-queue-heading">
+          <strong>Up Next</strong>
+          <div>
+            <span className="mock-source-badge">
+              <i /> YouTube
+            </span>
+            <span className="mock-refresh" aria-hidden="true">
+              <RefreshCw size={12} />
+            </span>
+          </div>
+        </div>
+
+        <div className="mock-queue-list">
+          {mockQueue.map((item, index) => (
+            <div className={`mock-queue-row ${index === 0 ? "is-next" : ""}`} key={item.title}>
+              <div className={`mock-queue-art ${item.art}`}>
+                <Music2 size={12} />
+                {index === 0 ? <Play size={6} fill="currentColor" /> : null}
+              </div>
+              <div>
+                <strong>{item.title}</strong>
+                <span>{item.artist}</span>
+              </div>
+              {index === 0 ? <small>Next</small> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CaptureFeature() {
   const [view, setView] = useState<"lyrics" | "player">("player");
 
@@ -242,22 +385,15 @@ function CaptureFeature() {
             </button>
           </div>
           <div className={`capture-viewport capture-${view}`}>
-            <img
-              src={
-                view === "lyrics"
-                  ? "/musicisland-live-lyric.png"
-                  : "/musicisland-live-up-next.png"
-              }
-              alt={
-                view === "lyrics"
-                  ? "Actual menu bar lyric shown by MusicIsland"
-                  : "Actual expanded MusicIsland now-playing interface"
-              }
-            />
+            {view === "lyrics" ? (
+              <MenuBarLyricMockup />
+            ) : (
+              <ExpandedPlayerMockup />
+            )}
           </div>
           <div className="capture-meta">
             <span>
-              <span className="live-dot" /> Captured in MusicIsland
+              <span className="live-dot" /> Interface preview
             </span>
             <span>Latest release · v1.0.3</span>
           </div>
