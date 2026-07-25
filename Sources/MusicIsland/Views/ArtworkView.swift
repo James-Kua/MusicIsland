@@ -5,6 +5,10 @@ import SwiftUI
 struct ArtworkView: View {
     let image: NSImage?
     let isPlaying: Bool
+    /// The island keeps its view tree alive while hidden, and an animation
+    /// running in an off-screen window still drives the display cycle — so the
+    /// placeholder only shimmers while someone can see it.
+    var isVisible: Bool = true
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -19,7 +23,7 @@ struct ArtworkView: View {
                         .foregroundStyle(.white.opacity(0.72))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(.white.opacity(0.12))
-                        .shimmering(active: true)
+                        .shimmering(active: isVisible)
                 }
             }
             .frame(width: 38, height: 38)

@@ -95,26 +95,39 @@ struct IslandView: View {
         }
     }
 
+    /// The island window is ordered out while collapsed, so this doubles as
+    /// "can anyone see this right now" for pausing animations.
+    private var isVisible: Bool {
+        model.isExpanded
+    }
+
     private var trackSummary: some View {
         HStack(spacing: 10) {
-            ArtworkView(image: model.coverImage, isPlaying: model.track.isPlaying)
+            ArtworkView(
+                image: model.coverImage,
+                isPlaying: model.track.isPlaying,
+                isVisible: isVisible
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 MarqueeText(
                     text: model.track.title,
                     font: .system(size: model.isExpanded ? 15 : 13, weight: .semibold),
-                    color: .white
+                    color: .white,
+                    isActive: isVisible
                 )
                 MarqueeText(
                     text: artistText,
                     font: .system(size: 11, weight: .medium),
-                    color: .white.opacity(0.68)
+                    color: .white.opacity(0.68),
+                    isActive: isVisible
                 )
                 if model.isExpanded, !model.track.album.isEmpty {
                     MarqueeText(
                         text: model.track.album,
                         font: .system(size: 10, weight: .medium),
-                        color: .white.opacity(0.5)
+                        color: .white.opacity(0.5),
+                        isActive: isVisible
                     )
                 }
             }
@@ -385,14 +398,15 @@ struct IslandView: View {
                 text: text,
                 font: .system(size: position.size, weight: position.weight),
                 color: .white.opacity(position.opacity),
-                alignment: .center
+                alignment: .center,
+                isActive: isVisible
             )
             .id(text)
             .transition(.opacity)
         }
         .frame(height: position == .current ? 18 : 14)
         .animation(.easeInOut(duration: 0.28), value: text)
-        .shimmering(active: loading)
+        .shimmering(active: loading && isVisible)
     }
 
     private func setHovering(_ hovering: Bool) {

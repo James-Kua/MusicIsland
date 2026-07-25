@@ -27,7 +27,7 @@ On first launch, grant **Accessibility** access when prompted (see [Permissions]
 - **Playback controls** — play/pause, next, previous, and scrub-to-position.
 - **Experimental Up Next** — inspect upcoming items from an active YouTube playlist or NetEase Music's local playing list.
 - **Time-synced lyrics** — lyrics (with translations when available) are fetched from NetEase and advanced in time with playback. The expanded island shows the current and next readable lines for context.
-- **System now-playing integration** — reads title, artist, album, artwork, elapsed time, and duration from macOS's private `MediaRemote` framework, with fallbacks for resilience.
+- **System now-playing integration** — reads title, artist, album, artwork, elapsed time, and duration from macOS's private `MediaRemote` framework, and follows its change notifications so skips and pauses show up right away.
 - **Works with YouTube and other sources** — anything that reports to macOS's now-playing controls (e.g. YouTube in a browser) shows up in the island. Note that lyrics are matched against NetEase's catalog by title/artist, so lyric availability and timing are **not guaranteed** for non-NetEase sources.
 - **Menu bar only** — runs as an agent (`LSUIElement`), so there's no Dock icon or stray window.
 
@@ -89,7 +89,7 @@ The result is written to `dist/MusicIsland-<version>.dmg`. The same `MUSICISLAND
 MusicIsland needs a couple of macOS permissions to work fully:
 
 - **Accessibility** — required to post system media-key events that control playback. Grant it under **System Settings → Privacy & Security → Accessibility**. If controls don't respond, confirm MusicIsland is enabled here.
-- **Now-playing access** — reading system media state relies on the private `MediaRemote` framework.
+- **Now-playing access** — reading system media state relies on the private `MediaRemote` framework. On macOS 15.4 and later, macOS only answers that call for Apple-signed binaries, so MusicIsland reads it through a small `/usr/bin/swift` helper process; that needs the Xcode Command Line Tools (`xcode-select --install`). Without them, the island reports that Now Playing is unavailable.
 
 ## Architecture
 
@@ -103,7 +103,7 @@ Sources/MusicIsland/
     StatusItemHoverController.swift  Hover detection for the menu bar icon
   Models/
     Track.swift                   Now-playing track value type
-    LyricLine.swift               A single timed lyric line
+    LyricLine.swift               A single timed lyric line, and the timeline cursor
     NowPlayingSnapshot.swift      Immutable snapshot of player state
     MusicModel.swift              Observable app state; polling + lyric syncing
   Window/
@@ -115,7 +115,8 @@ Sources/MusicIsland/
     ScrubberView.swift            Seek bar with drag-to-scrub
     IslandIconControl.swift       Round control button
   NowPlaying/
-    NowPlayingBridge.swift        Reads now-playing info from MediaRemote
+    NowPlayingBridge.swift        Reads now-playing info from MediaRemote and watches it for changes
+    NowPlayingHelperProcess.swift Streams now-playing updates from a helper (see below)
   NetEase/
     MediaKey.swift                System media key codes
     NetEaseController.swift       Playback control (media keys + MediaRemote seek)
@@ -126,7 +127,9 @@ Sources/MusicIsland/
     AccessibilityPermission.swift Requests Accessibility access
 ```
 
-**Data flow:** `MusicModel` polls `NowPlayingBridge` once per second. The bridge reads `MRMediaRemoteGetNowPlayingInfo` from the private `MediaRemote` framework (loaded dynamically via `dlopen`), with a sub-process probe and a NetEase-specific fallback when no media info is available. When the track changes, `MusicModel` asks `NetEaseMusicClient` for lyrics, which `LyricParser` turns into timed lines that are advanced against the current playback position. Playback commands go through `NetEaseController` (system media keys, plus `MRMediaRemoteSendCommand` for seeking).
+**Data flow:** `NowPlayingBridge` reads `MRMediaRemoteGetNowPlayingInfo` from the private `MediaRemote` framework (loaded dynamically via `dlopen`) and registers for its change notifications, so `MusicModel` hears about track and playback changes as they happen; polling continues in the background (1–5s depending on state) as a backstop. When the track changes, `MusicModel` asks `NetEaseMusicClient` for lyrics — retrying with backoff when a lookup fails for a transient reason — and `LyricParser` turns them into timed lines that a `LyricTimeline` cursor advances against the current playback position. Playback commands go through `NetEaseController` (system media keys, plus `MRMediaRemoteSendCommand` for seeking).
+
+**The helper process:** since macOS 15.4, `MRMediaRemoteGetNowPlayingInfo` only answers Apple-signed binaries — read from inside MusicIsland it returns an empty dictionary, while the identical code run through `/usr/bin/swift` returns the real metadata. So when the in-process read comes back empty, `NowPlayingBridge` falls through to `NowPlayingHelperProcess`, which runs that read in a Swift interpreter process. The helper is started **once** and kept alive: it registers for MediaRemote's notifications and writes a JSON line per change (plus a lighter heartbeat every 3s), rather than being re-spawned per poll. It exits with the app, and if the Swift toolchain is missing the island says so instead of sitting on "Nothing playing".
 
 ## Contributing
 

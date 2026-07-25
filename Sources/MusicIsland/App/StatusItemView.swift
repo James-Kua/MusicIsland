@@ -7,6 +7,11 @@ final class StatusItemView: NSView {
     private var backgroundStyle: MenuBarLyricBackgroundStyle = .pill
     private var backgroundColor: MenuBarLyricBackgroundColor = .sky
     private var backgroundOpacity: Double = 0.55
+    // Laid out once per lyric change. AppKit asks for the intrinsic size more
+    // than once per update and then draws, and text layout is the expensive part
+    // of both — doing it in `update` keeps it off the menu bar's draw path.
+    private var lyricAttributedString = NSAttributedString()
+    private var lyricTextSize: NSSize = .zero
 
     override var intrinsicContentSize: NSSize {
         let textWidth = lyricTextSize.width
@@ -21,13 +26,39 @@ final class StatusItemView: NSView {
         backgroundColor: MenuBarLyricBackgroundColor,
         backgroundOpacity: Double
     ) {
+        guard lyric != self.lyric
+            || fontSize != self.fontSize
+            || backgroundStyle != self.backgroundStyle
+            || backgroundColor != self.backgroundColor
+            || backgroundOpacity != self.backgroundOpacity
+        else { return }
+
         self.lyric = lyric
         self.fontSize = fontSize
         self.backgroundStyle = backgroundStyle
         self.backgroundColor = backgroundColor
         self.backgroundOpacity = backgroundOpacity
+        layOutLyric()
         invalidateIntrinsicContentSize()
         needsDisplay = true
+    }
+
+    private func layOutLyric() {
+        guard let lyric, !lyric.isEmpty else {
+            lyricAttributedString = NSAttributedString()
+            lyricTextSize = .zero
+            return
+        }
+
+        lyricAttributedString = NSAttributedString(
+            string: lyric,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+                .kern: 0.05,
+            ]
+        )
+        lyricTextSize = lyricAttributedString.size()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -72,21 +103,5 @@ final class StatusItemView: NSView {
         }
 
         lyricAttributedString.draw(in: textRect)
-    }
-
-    private var lyricTextSize: NSSize {
-        guard lyric?.isEmpty == false else { return .zero }
-        return lyricAttributedString.size()
-    }
-
-    private var lyricAttributedString: NSAttributedString {
-        NSAttributedString(
-            string: lyric ?? "",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
-                .foregroundColor: NSColor.labelColor,
-                .kern: 0.05,
-            ]
-        )
     }
 }

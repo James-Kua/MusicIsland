@@ -2,22 +2,47 @@ import AppKit
 import Foundation
 
 /// Reads now-playing information from macOS's private `MediaRemote` framework
-/// (loaded dynamically via `dlopen`). Falls back to a sub-process probe and a
-/// NetEase-specific placeholder when no media metadata is available.
+/// (loaded dynamically via `dlopen`), and reports track/playback changes as they
+/// happen so the UI does not have to wait for the next poll.
+///
+/// On macOS 15.4 and later the in-process read returns nothing — MediaRemote
+/// only answers Apple-signed binaries — so the read falls through to
+/// `NowPlayingHelperProcess`, which streams the same metadata from a helper.
+/// A NetEase-specific placeholder covers the case where neither path has data.
 final class NowPlayingBridge: @unchecked Sendable {
     private typealias CopyNowPlayingInfo = @convention(c) (DispatchQueue, @escaping (NSDictionary) -> Void) -> Void
     private typealias GetNowPlayingApplicationPID = @convention(c) (DispatchQueue, @escaping (Int32) -> Void) -> Void
+    private typealias RegisterForNotifications = @convention(c) (DispatchQueue) -> Void
+
+    /// Called on the main thread when MediaRemote reports a change. Set it
+    /// before the first read; it is only ever touched from the main thread.
+    var onNowPlayingChange: (() -> Void)?
+
+    private static let changeNotificationNames = [
+        "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
+        "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
+        "kMRMediaRemoteNowPlayingApplicationDidChangeNotification"
+    ]
 
     private let callbackQueue = DispatchQueue(label: "app.musicisland.mediaremote")
     private let handle: UnsafeMutableRawPointer?
     private let copyInfo: CopyNowPlayingInfo?
     private let getPID: GetNowPlayingApplicationPID?
+    private let helper = NowPlayingHelperProcess()
+    private var observers: [NSObjectProtocol] = []
+    private var changeCoalesceTask: DispatchWorkItem?
     private var cachedSnapshot = NowPlayingSnapshot(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
-    private var lastHelperAttempt: Date?
-    private var consecutiveHelperFailures = 0
-    private let helperCooldown: TimeInterval = 2
-    private let failedHelperCooldown: TimeInterval = 30
-    private let helperFailureThreshold = 3
+    /// Written on the main thread when a helper line arrives, read from the
+    /// background poll, so both sides go through this lock.
+    private let helperLock = NSLock()
+    private var helperSnapshot: NowPlayingSnapshot?
+    private var helperSnapshotAt: Date?
+    private var lastPopulatedRead: Date?
+    /// How long a populated read keeps standing when MediaRemote answers with an
+    /// empty dictionary. Those blanks are usually a dropped reply rather than a
+    /// stopped player, and reacting to them resets the track identity — which
+    /// wipes the lyric that was already on screen.
+    private let emptyReadGracePeriod: TimeInterval = 4
 
     init() {
         handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW)
@@ -28,42 +53,117 @@ final class NowPlayingBridge: @unchecked Sendable {
             getPID = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationPID").map {
                 unsafeBitCast($0, to: GetNowPlayingApplicationPID.self)
             }
+            registerForChangeNotifications(handle: handle)
         } else {
             copyInfo = nil
             getPID = nil
         }
+
+        helper.onPayload = { [weak self] payload in
+            self?.applyHelperPayload(payload)
+        }
     }
 
     deinit {
+        changeCoalesceTask?.cancel()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        helper.stop()
         if let handle {
             dlclose(handle)
         }
     }
 
-    func currentTrack() -> NowPlayingSnapshot {
-        guard let copyInfo else { return netEaseFallback() ?? cachedSnapshot }
+    /// Whether now-playing metadata cannot be read at all: this macOS blocks the
+    /// in-process read and the helper it would fall back on cannot run.
+    var isNowPlayingAccessBlocked: Bool {
+        helperLock.lock()
+        defer { helperLock.unlock() }
+        return helper.isUnavailable && helperSnapshot == nil
+    }
 
-        let semaphore = DispatchSemaphore(value: 0)
+    private func applyHelperPayload(_ payload: NowPlayingHelperProcess.Payload) {
+        let elapsed = adjustedElapsed(
+            baseElapsed: payload.elapsed,
+            timestamp: payload.timestamp,
+            playbackRate: payload.isPlaying ? 1 : 0
+        )
+
+        helperLock.lock()
+        // Heartbeat lines leave artwork out to keep them small, so carry the
+        // cover over from the change event — but only while the same song is
+        // playing, never onto a new one.
+        let isSameTrack = helperSnapshot?.track.title == payload.title
+            && helperSnapshot?.track.artist == payload.artist
+        helperSnapshot = NowPlayingSnapshot(
+            track: Track(
+                title: payload.title,
+                artist: payload.artist,
+                album: payload.album,
+                isPlaying: payload.isPlaying,
+                appName: payload.appName.isEmpty ? "NetEase Music" : payload.appName
+            ),
+            elapsed: elapsed,
+            duration: payload.duration > 0 ? payload.duration : (isSameTrack ? helperSnapshot?.duration ?? 0 : 0),
+            artworkData: payload.artworkData ?? (isSameTrack ? helperSnapshot?.artworkData : nil)
+        )
+        helperSnapshotAt = Date()
+        helperLock.unlock()
+
+        onNowPlayingChange?()
+    }
+
+    private func registerForChangeNotifications(handle: UnsafeMutableRawPointer) {
+        guard let symbol = dlsym(handle, "MRMediaRemoteRegisterForNowPlayingNotifications") else { return }
+        unsafeBitCast(symbol, to: RegisterForNotifications.self)(callbackQueue)
+
+        observers = Self.changeNotificationNames.map { name in
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name(name),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.handleChangeNotification()
+            }
+        }
+    }
+
+    /// A single skip fires several notifications in a row; collapse them into
+    /// one read so a burst does not queue up redundant MediaRemote round-trips.
+    private func handleChangeNotification() {
+        changeCoalesceTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            self?.onNowPlayingChange?()
+        }
+        changeCoalesceTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: task)
+    }
+
+    func currentTrack() -> NowPlayingSnapshot {
+        guard let copyInfo else {
+            helper.startIfNeeded()
+            return streamedSnapshot() ?? netEaseFallback() ?? cachedSnapshot
+        }
+
+        let group = DispatchGroup()
         var info = NSDictionary()
         var pid: Int32 = 0
-        var pendingCallbacks = 1
 
+        group.enter()
         copyInfo(callbackQueue) { dictionary in
             info = dictionary
-            semaphore.signal()
+            group.leave()
         }
 
         if let getPID {
-            pendingCallbacks += 1
+            group.enter()
             getPID(callbackQueue) { value in
                 pid = value
-                semaphore.signal()
+                group.leave()
             }
         }
 
-        for _ in 0..<pendingCallbacks {
-            _ = semaphore.wait(timeout: .now() + 0.8)
-        }
+        // One shared budget for both replies, rather than one per callback.
+        _ = group.wait(timeout: .now() + 0.8)
 
         let title = stringValue(info, keys: ["kMRMediaRemoteNowPlayingInfoTitle", "title"])
         let artist = stringValue(info, keys: ["kMRMediaRemoteNowPlayingInfoArtist", "artist"])
@@ -79,10 +179,29 @@ final class NowPlayingBridge: @unchecked Sendable {
         let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
 
         guard !title.isEmpty else {
-            cachedSnapshot = throttledHelperSnapshot() ?? netEaseFallback() ?? .init(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
+            // Either nothing is playing, or this macOS refuses the in-process
+            // read. The helper answers both cases; while it is starting up, an
+            // established snapshot keeps standing briefly, because a blank read
+            // resets the track identity and wipes the lyric already on screen.
+            helper.startIfNeeded()
+            if let streamed = streamedSnapshot() {
+                lastPopulatedRead = Date()
+                cachedSnapshot = streamed
+                return streamed
+            }
+            if let lastPopulatedRead,
+               Date().timeIntervalSince(lastPopulatedRead) < emptyReadGracePeriod,
+               cachedSnapshot.track.title != Track.empty.title {
+                return cachedSnapshot
+            }
+            self.lastPopulatedRead = nil
+            cachedSnapshot = netEaseFallback()
+                ?? blockedAccessSnapshot()
+                ?? .init(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
             return cachedSnapshot
         }
 
+        lastPopulatedRead = Date()
         cachedSnapshot = NowPlayingSnapshot(
             track: Track(
                 title: title,
@@ -98,160 +217,39 @@ final class NowPlayingBridge: @unchecked Sendable {
         return cachedSnapshot
     }
 
-    /// Runs the now-playing probe in a fresh `swift` interpreter process. This is
-    /// a fallback for cases where the in-process MediaRemote call returns nothing.
-    private func throttledHelperSnapshot() -> NowPlayingSnapshot? {
-        let now = Date()
-        let cooldown = consecutiveHelperFailures >= helperFailureThreshold
-            ? failedHelperCooldown
-            : helperCooldown
-        if let lastHelperAttempt, now.timeIntervalSince(lastHelperAttempt) < cooldown {
-            return cachedSnapshot.track.title == Track.empty.title ? nil : cachedSnapshot
-        }
-        lastHelperAttempt = now
-        guard let snapshot = helperSnapshot() else {
-            consecutiveHelperFailures += 1
-            return nil
-        }
-        consecutiveHelperFailures = 0
-        return snapshot
-    }
-
-    private func helperSnapshot() -> NowPlayingSnapshot? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
-        process.arguments = ["-e", Self.interpreterProbeSource]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return nil
-        }
-
-        guard process.terminationStatus == 0 else { return nil }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let title = json["title"] as? String,
-            !title.isEmpty
+    /// The most recent line from the helper, with its position projected to now.
+    /// Lines stop arriving if the helper dies, so anything older than a few
+    /// heartbeats is treated as no data rather than reported as current.
+    private func streamedSnapshot() -> NowPlayingSnapshot? {
+        helperLock.lock()
+        defer { helperLock.unlock() }
+        guard let snapshot = helperSnapshot, let receivedAt = helperSnapshotAt,
+              Date().timeIntervalSince(receivedAt) < 12
         else { return nil }
 
-        let artist = json["artist"] as? String ?? ""
-        let album = json["album"] as? String ?? ""
-        let appName = json["appName"] as? String ?? "NetEase Music"
-        let artworkData = (json["artworkBase64"] as? String).flatMap { Data(base64Encoded: $0) }
-        let isPlaying = (json["isPlaying"] as? Bool) ?? true
-        let rate = isPlaying ? 1.0 : 0.0
-        let duration = json["duration"] as? TimeInterval ?? cachedSnapshot.duration
-        let elapsed = adjustedElapsed(
-            baseElapsed: json["elapsed"] as? TimeInterval ?? cachedSnapshot.elapsed,
-            timestamp: (json["timestamp"] as? String).flatMap(Self.isoDateFormatter.date(from:)),
-            playbackRate: rate
-        )
-
+        guard snapshot.track.isPlaying else { return snapshot }
         return NowPlayingSnapshot(
-            track: Track(
-                title: title,
-                artist: artist,
-                album: album,
-                isPlaying: isPlaying,
-                appName: appName
-            ),
-            elapsed: elapsed,
-            duration: duration,
-            artworkData: artworkData ?? cachedSnapshot.artworkData
+            track: snapshot.track,
+            elapsed: snapshot.elapsed + Date().timeIntervalSince(receivedAt),
+            duration: snapshot.duration,
+            artworkData: snapshot.artworkData
         )
     }
 
-    /// Source for the out-of-process now-playing probe (see `helperSnapshot`).
-    private static let interpreterProbeSource = #"""
-    import AppKit
-    import Foundation
-
-    typealias CopyNowPlayingInfo = @convention(c) (DispatchQueue, @escaping (NSDictionary) -> Void) -> Void
-    typealias GetNowPlayingApplicationPID = @convention(c) (DispatchQueue, @escaping (Int32) -> Void) -> Void
-
-    func stringValue(_ info: NSDictionary, _ key: String) -> String {
-        if let value = info[key] as? String { return value }
-        if let value = info[key] as? NSString { return value as String }
-        return ""
+    /// Shown when this macOS blocks the in-process read and the helper cannot
+    /// run either. Without it the island just says "Nothing playing" forever,
+    /// with no hint that anything is wrong or how to fix it.
+    private func blockedAccessSnapshot() -> NowPlayingSnapshot? {
+        guard isNowPlayingAccessBlocked else { return nil }
+        return NowPlayingSnapshot(track: .nowPlayingUnavailable, elapsed: 0, duration: 0, artworkData: nil)
     }
-
-    func numberValue(_ info: NSDictionary, _ key: String) -> Double {
-        if let value = info[key] as? NSNumber { return value.doubleValue }
-        if let value = info[key] as? Double { return value }
-        if let value = info[key] as? String, let number = Double(value) { return number }
-        if let value = info[key] as? NSString { return value.doubleValue }
-        return 0
-    }
-
-    let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW)
-    guard let handle, let copySymbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") else { exit(2) }
-
-    let copyInfo = unsafeBitCast(copySymbol, to: CopyNowPlayingInfo.self)
-    let getPID = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationPID").map {
-        unsafeBitCast($0, to: GetNowPlayingApplicationPID.self)
-    }
-
-    let queue = DispatchQueue(label: "app.musicisland.interpreter-probe")
-    let semaphore = DispatchSemaphore(value: 0)
-    var info = NSDictionary()
-    var pid: Int32 = 0
-    var callbacks = 1
-
-    copyInfo(queue) { dictionary in
-        info = dictionary
-        semaphore.signal()
-    }
-
-    if let getPID {
-        callbacks += 1
-        getPID(queue) { value in
-            pid = value
-            semaphore.signal()
-        }
-    }
-
-    for _ in 0..<callbacks {
-        _ = semaphore.wait(timeout: .now() + 1.5)
-    }
-
-    let title = stringValue(info, "kMRMediaRemoteNowPlayingInfoTitle")
-    guard !title.isEmpty else { exit(1) }
-
-    let rate = numberValue(info, "kMRMediaRemoteNowPlayingInfoPlaybackRate")
-    let payload: [String: Any] = [
-        "title": title,
-        "artist": stringValue(info, "kMRMediaRemoteNowPlayingInfoArtist"),
-        "album": stringValue(info, "kMRMediaRemoteNowPlayingInfoAlbum"),
-        "artworkBase64": (info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data)?.base64EncodedString() ?? "",
-        "elapsed": numberValue(info, "kMRMediaRemoteNowPlayingInfoElapsedTime"),
-        "duration": numberValue(info, "kMRMediaRemoteNowPlayingInfoDuration"),
-        "timestamp": ISO8601DateFormatter().string(from: (info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date) ?? Date()),
-        "isPlaying": rate > 0,
-        "appName": NSRunningApplication(processIdentifier: pid)?.localizedName ?? ""
-    ]
-
-    let data = try JSONSerialization.data(withJSONObject: payload)
-    FileHandle.standardOutput.write(data)
-    """#
 
     private func netEaseFallback() -> NowPlayingSnapshot? {
         guard let app = NetEaseController.runningApplication() else { return nil }
+        var track = Track.netEaseWaiting
+        track.appName = app.localizedName ?? "NetEase Music"
         return NowPlayingSnapshot(
-            track: Track(
-                title: "NetEase Music is active",
-                artist: "Waiting for macOS Now Playing metadata",
-                album: "",
-                isPlaying: true,
-                appName: app.localizedName ?? "NetEase Music"
-            ),
+            track: track,
             elapsed: cachedSnapshot.elapsed,
             duration: cachedSnapshot.duration,
             artworkData: cachedSnapshot.artworkData

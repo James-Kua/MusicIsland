@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "Lyrics will appear here",
         "Finding lyrics...",
         "No synced lyric found",
+        "Lyrics unavailable",
     ]
 
     private func updateStatusTitle(lyric: String, isPlaying: Bool) {

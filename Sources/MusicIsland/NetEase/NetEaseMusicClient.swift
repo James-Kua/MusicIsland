@@ -1,5 +1,14 @@
 import Foundation
 
+/// The outcome of a lyric lookup. `notFound` is a settled answer (the catalog
+/// has no synced lyrics for this song); `failed` is transient — a network error,
+/// a timeout, or a throttled response — and is worth retrying.
+enum LyricLookup: Equatable {
+    case lines([LyricLine])
+    case notFound
+    case failed
+}
+
 /// Fetches time-synced lyrics from NetEase Cloud Music's public web API by
 /// searching for the best-matching song and downloading its LRC lyrics.
 final class NetEaseMusicClient {
@@ -11,17 +20,32 @@ final class NetEaseMusicClient {
             "User-Agent": "Mozilla/5.0 MusicIsland",
             "Referer": "https://music.163.com/"
         ]
+        // Without explicit timeouts a stalled request hangs for the 60s default,
+        // which reads as "lyrics never loaded" long after the song has moved on.
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 15
+        configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration)
     }
 
-    func lyrics(title: String, artist: String) async -> [LyricLine] {
-        guard let id = await searchSongID(title: title, artist: artist) else {
-            return []
+    func lyrics(title: String, artist: String) async -> LyricLookup {
+        switch await searchSongID(title: title, artist: artist) {
+        case let .found(id):
+            return await fetchLyrics(songID: id)
+        case .noMatch:
+            return .notFound
+        case .failed:
+            return .failed
         }
-        return await fetchLyrics(songID: id)
     }
 
-    private func searchSongID(title: String, artist: String) async -> Int? {
+    private enum SearchOutcome {
+        case found(Int)
+        case noMatch
+        case failed
+    }
+
+    private func searchSongID(title: String, artist: String) async -> SearchOutcome {
         let target = SearchTarget(title: title, artist: artist)
         var components = URLComponents(string: "https://music.163.com/api/cloudsearch/pc")
         components?.queryItems = [
@@ -30,15 +54,35 @@ final class NetEaseMusicClient {
             .init(name: "limit", value: "10"),
             .init(name: "offset", value: "0")
         ]
-        guard let url = components?.url else { return nil }
+        guard let url = components?.url else { return .noMatch }
 
+        guard let json = await json(from: url) else { return .failed }
+        let result = json["result"] as? [String: Any]
+        let songs = result?["songs"] as? [[String: Any]] ?? []
+        guard let match = bestSongMatch(from: songs, target: target) else { return .noMatch }
+        return .found(match.id)
+    }
+
+    /// Fetches and decodes a NetEase API response, treating transport errors,
+    /// non-2xx statuses, and NetEase's own non-200 `code` (returned with HTTP
+    /// 200 when a client is throttled) alike as a transient failure.
+    private func json(from url: URL) async -> [String: Any]? {
         do {
-            let (data, _) = try await session.data(from: url)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let result = json?["result"] as? [String: Any]
-            let songs = result?["songs"] as? [[String: Any]]
-            return bestSongMatch(from: songs ?? [], target: target)?.id
+            let (data, response) = try await session.data(from: url)
+            if let status = (response as? HTTPURLResponse)?.statusCode, !(200..<300).contains(status) {
+                DebugLog.write("netease http status=\(status) url=\(url.path)")
+                return nil
+            }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+            if let code = (json["code"] as? NSNumber)?.intValue, code != 200 {
+                DebugLog.write("netease api code=\(code) url=\(url.path)")
+                return nil
+            }
+            return json
         } catch {
+            DebugLog.write("netease request failed url=\(url.path) error=\(error.localizedDescription)")
             return nil
         }
     }
@@ -292,7 +336,7 @@ final class NetEaseMusicClient {
         }
     }
 
-    private func fetchLyrics(songID: Int) async -> [LyricLine] {
+    private func fetchLyrics(songID: Int) async -> LyricLookup {
         var components = URLComponents(string: "https://music.163.com/api/song/lyric")
         components?.queryItems = [
             .init(name: "id", value: "\(songID)"),
@@ -300,18 +344,14 @@ final class NetEaseMusicClient {
             .init(name: "kv", value: "-1"),
             .init(name: "tv", value: "-1")
         ]
-        guard let url = components?.url else { return [] }
+        guard let url = components?.url else { return .notFound }
+        guard let json = await json(from: url) else { return .failed }
 
-        do {
-            let (data, _) = try await session.data(from: url)
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let lyricContainer = json?["lrc"] as? [String: Any]
-            let lyric = lyricContainer?["lyric"] as? String ?? ""
-            let translationContainer = json?["tlyric"] as? [String: Any]
-            let translatedLyric = translationContainer?["lyric"] as? String ?? ""
-            return LyricParser.parse(lyric, translated: translatedLyric)
-        } catch {
-            return []
-        }
+        let lyricContainer = json["lrc"] as? [String: Any]
+        let lyric = lyricContainer?["lyric"] as? String ?? ""
+        let translationContainer = json["tlyric"] as? [String: Any]
+        let translatedLyric = translationContainer?["lyric"] as? String ?? ""
+        let lines = LyricParser.parse(lyric, translated: translatedLyric)
+        return lines.isEmpty ? .notFound : .lines(lines)
     }
 }

@@ -33,8 +33,10 @@ final class UpcomingQueueProvider: @unchecked Sendable {
         // accessibility flags are set, so the very first scan often sees an
         // empty tree. Rescan briefly instead of failing the first open.
         var lastState = UpcomingQueueState.unavailable("Open the playing YouTube tab to read its playlist.")
+        let budget = Date().addingTimeInterval(4)
         for attempt in 0..<3 {
             if attempt > 0 {
+                guard Date() < budget else { break }
                 Thread.sleep(forTimeInterval: 0.45)
             }
             let snapshot = AccessibilitySnapshot(application: app)
@@ -465,13 +467,21 @@ private final class AccessibilitySnapshot {
     private let targetRowText: String?
     private var visitedNodes = 0
     private let nodeLimit = 6_000
+    private let deadline: Date
 
     init(
         application: NSRunningApplication,
-        targetRowText: String? = nil
+        targetRowText: String? = nil,
+        timeLimit: TimeInterval = 2
     ) {
         root = AXUIElementCreateApplication(application.processIdentifier)
         self.targetRowText = targetRowText
+        deadline = Date().addingTimeInterval(timeLimit)
+        // Every attribute read below is a synchronous IPC call into the target
+        // app. Without a messaging timeout a busy player (a browser mid-render,
+        // Electron on a slow frame) can stall each one for the 6s system
+        // default, which is what makes Up Next feel like it hangs.
+        AXUIElementSetMessagingTimeout(root, 0.75)
         // Chromium-based apps (Chrome, Arc, Edge, Brave, Electron players) only
         // expose their web content after these flags are set; other apps ignore
         // the unknown attributes, so setting them unconditionally is safe.
@@ -490,7 +500,7 @@ private final class AccessibilitySnapshot {
     }
 
     private func scan(_ element: AXUIElement, depth: Int) {
-        guard depth < 24, visitedNodes < nodeLimit else { return }
+        guard depth < 24, visitedNodes < nodeLimit, !isPastDeadline else { return }
         visitedNodes += 1
 
         let role = stringAttribute(kAXRoleAttribute, from: element)
@@ -534,8 +544,16 @@ private final class AccessibilitySnapshot {
         }
     }
 
+    /// A node budget alone does not bound the scan, because each node costs an
+    /// IPC round-trip whose latency depends on the other app. The wall-clock
+    /// deadline is what keeps a slow player from stretching a scan out; whatever
+    /// was collected before it hit is still returned.
+    private var isPastDeadline: Bool {
+        Date() > deadline
+    }
+
     private func readableTexts(in element: AXUIElement, depth: Int) -> [String] {
-        guard depth < 6 else { return [] }
+        guard depth < 6, !isPastDeadline else { return [] }
         let role = stringAttribute(kAXRoleAttribute, from: element)
         var values: [String] = []
         if role == kAXStaticTextRole || role == Self.linkRole || role == kAXCellRole {

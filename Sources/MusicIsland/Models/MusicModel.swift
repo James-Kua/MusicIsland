@@ -21,9 +21,13 @@ final class MusicModel: ObservableObject {
     @Published var upcomingQueue: UpcomingQueueState = .idle
     @Published var isExpanded = false {
         didSet {
-            if isExpanded, abs(elapsed - playbackElapsed) > 0.25 {
+            guard isExpanded else { return }
+            if abs(elapsed - playbackElapsed) > 0.25 {
                 elapsed = playbackElapsed
             }
+            // Opening the island is the moment the lyric actually matters, so
+            // take it as a cue to pick up a lookup that ran out of retries.
+            retryLyricsIfStalled()
         }
     }
 
@@ -31,10 +35,12 @@ final class MusicModel: ObservableObject {
     private let netEase = NetEaseMusicClient()
     private let queueProvider = UpcomingQueueProvider()
     private var refreshLoopTask: Task<Void, Never>?
-    private var lyricLines: [LyricLine] = []
+    private var lyricTimeline = LyricTimeline()
     private var lyricTask: Task<Void, Never>?
+    private var lyricRetryTask: Task<Void, Never>?
+    private var lyricAttempt = 0
     private var refreshTask: Task<Void, Never>?
-    private var lastLyricLookupKey = ""
+    private var hasPendingRefresh = false
     private var currentSongKey = ""
     private var lastArtworkData: Data?
     private var artworkColorTask: Task<Void, Never>?
@@ -51,6 +57,7 @@ final class MusicModel: ObservableObject {
         refreshLoopTask?.cancel()
         displayTickTask?.cancel()
         lyricTask?.cancel()
+        lyricRetryTask?.cancel()
         refreshTask?.cancel()
         artworkColorTask?.cancel()
         queueTask?.cancel()
@@ -58,6 +65,12 @@ final class MusicModel: ObservableObject {
 
     func start() {
         guard refreshLoopTask == nil else { return }
+        // MediaRemote tells us the moment a track or playback state changes, so
+        // a skip lands immediately instead of waiting out the next poll. Polling
+        // stays on as the safety net for players that update silently.
+        nowPlaying.onNowPlayingChange = { [weak self] in
+            self?.refresh()
+        }
         refreshLoopTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -85,6 +98,9 @@ final class MusicModel: ObservableObject {
     }
 
     private func tickDisplay() {
+        // Nothing moves while paused: the projected position is pinned to the
+        // anchor, and seeking updates the position and lyric on the spot.
+        guard track.isPlaying else { return }
         let value = projectedElapsed
         playbackElapsed = value
         if abs(elapsed - value) > 0.05 {
@@ -187,7 +203,13 @@ final class MusicModel: ObservableObject {
     }
 
     private func refresh() {
-        guard refreshTask == nil else { return }
+        // A read already in flight will not reflect a change that arrived after
+        // it started, so remember the request and re-read once it lands instead
+        // of dropping it.
+        guard refreshTask == nil else {
+            hasPendingRefresh = true
+            return
+        }
 
         let bridge = nowPlaying
         refreshTask = Task.detached(priority: .utility) { [weak self] in
@@ -198,6 +220,13 @@ final class MusicModel: ObservableObject {
 
     private func apply(_ snapshot: NowPlayingSnapshot) {
         refreshTask = nil
+        let shouldRereadAfterApplying = hasPendingRefresh
+        hasPendingRefresh = false
+        defer {
+            if shouldRereadAfterApplying {
+                refresh()
+            }
+        }
         if duration != snapshot.duration {
             duration = snapshot.duration
         }
@@ -234,41 +263,99 @@ final class MusicModel: ObservableObject {
         let songKey = lyricKey(for: snapshot.track)
         if songKey != currentSongKey {
             currentSongKey = songKey
-            lyricLines = []
-            lyric = snapshot.track.title == Track.empty.title ? "Lyrics will appear here" : "Finding lyrics..."
+            lyricTimeline = LyricTimeline()
+            lyric = snapshot.track.isPlaceholder ? "Lyrics will appear here" : "Finding lyrics..."
             translatedLyric = ""
             nextLyric = ""
             if isShowingQueue {
                 refreshUpcomingQueue()
             }
-            fetchLyricsIfNeeded(for: snapshot.track)
+            startLyricLookup(for: snapshot.track, key: songKey)
         }
 
         updateLyric()
     }
 
-    private func fetchLyricsIfNeeded(for track: Track) {
-        let key = lyricKey(for: track)
-        guard track.title != Track.empty.title, key != lastLyricLookupKey else { return }
-        lastLyricLookupKey = key
+    private static let lyricRetryDelays: [TimeInterval] = [1.5, 4, 9, 20]
 
+    /// Begins a fresh lyric lookup for `track`. Any in-flight lookup or pending
+    /// retry belongs to a song that is no longer playing, so both are dropped.
+    private func startLyricLookup(for track: Track, key: String) {
         lyricTask?.cancel()
+        lyricRetryTask?.cancel()
+        lyricRetryTask = nil
+        lyricAttempt = 0
+        guard !track.isPlaceholder, !key.isEmpty else {
+            lyricTask = nil
+            isLoadingLyrics = false
+            return
+        }
+        performLyricLookup(for: track, key: key)
+    }
+
+    private func performLyricLookup(for track: Track, key: String) {
         isLoadingLyrics = true
         lyricTask = Task { [netEase] in
-            let lines = await netEase.lyrics(title: track.title, artist: track.artist)
+            let result = await netEase.lyrics(title: track.title, artist: track.artist)
             guard !Task.isCancelled, key == self.currentSongKey else { return }
-            await MainActor.run {
-                guard key == self.currentSongKey else { return }
-                self.isLoadingLyrics = false
-                self.lyricLines = lines
-                self.updateLyric()
-                if lines.isEmpty {
-                    self.lyric = "No synced lyric found"
-                    self.translatedLyric = ""
-                    self.nextLyric = ""
-                }
-            }
+            self.applyLyricLookup(result, for: track, key: key)
         }
+    }
+
+    private func applyLyricLookup(_ result: LyricLookup, for track: Track, key: String) {
+        guard key == currentSongKey else { return }
+        lyricTask = nil
+
+        switch result {
+        case let .lines(lines):
+            lyricAttempt = 0
+            isLoadingLyrics = false
+            lyricTimeline = LyricTimeline(lines)
+            updateLyric()
+        case .notFound:
+            lyricAttempt = 0
+            isLoadingLyrics = false
+            lyricTimeline = LyricTimeline()
+            setDisplayedLyric("No synced lyric found", translated: "")
+            setNextLyric("")
+        case .failed:
+            // The lookup failed for a reason that may not still hold — a dropped
+            // request, a timeout, a throttled response. Back off and try again
+            // rather than leaving the song permanently without lyrics.
+            scheduleLyricRetry(for: track, key: key)
+        }
+    }
+
+    private func scheduleLyricRetry(for track: Track, key: String) {
+        guard lyricAttempt < Self.lyricRetryDelays.count else {
+            isLoadingLyrics = false
+            setDisplayedLyric("Lyrics unavailable", translated: "")
+            setNextLyric("")
+            return
+        }
+
+        let delay = Self.lyricRetryDelays[lyricAttempt]
+        lyricAttempt += 1
+        DebugLog.write("lyrics retry attempt=\(lyricAttempt) in=\(delay)s key=\"\(key)\"")
+        lyricRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self, key == self.currentSongKey else { return }
+            self.lyricRetryTask = nil
+            self.performLyricLookup(for: track, key: key)
+        }
+    }
+
+    /// Restarts a lookup that gave up, so the island never gets stuck without
+    /// lyrics for a song that does have them.
+    private func retryLyricsIfStalled() {
+        guard lyricTimeline.isEmpty,
+              lyricTask == nil,
+              lyricRetryTask == nil,
+              lyricAttempt >= Self.lyricRetryDelays.count,
+              !track.isPlaceholder
+        else { return }
+        lyricAttempt = 0
+        performLyricLookup(for: track, key: currentSongKey)
     }
 
     static let defaultAccent = Color(red: 0.09, green: 0.09, blue: 0.11)
@@ -325,13 +412,13 @@ final class MusicModel: ObservableObject {
     }
 
     private func updateLyric() {
-        guard !lyricLines.isEmpty else {
+        guard !lyricTimeline.isEmpty else {
             setNextLyric("")
             setDisplayedLyric(lyric, translated: "")
             return
         }
 
-        let window = lyricLines.lyricWindow(at: playbackElapsed)
+        let window = lyricTimeline.window(at: playbackElapsed)
         setNextLyric(window.next?.text ?? "")
         setDisplayedLyric(
             window.current?.text ?? "",
@@ -404,18 +491,22 @@ final class MusicModel: ObservableObject {
         return min(max(0, pending.target + advanced), upperBound)
     }
 
+    /// How often to poll. MediaRemote now pushes track and playback changes, so
+    /// polling is a backstop rather than the primary signal — it can run slower
+    /// while the island is closed without the UI falling behind. The scrubber
+    /// and lyric run off the local clock between polls either way.
     private var refreshInterval: TimeInterval {
         if refreshTask != nil {
             return 1
         }
-        if pendingPlaybackState != nil || pendingSeek != nil {
+        if pendingPlaybackState != nil || pendingSeek != nil || isExpanded {
             return 1
         }
-        if isExpanded || track.isPlaying {
-            return 1
+        if track.isPlaying {
+            return 2
         }
         if track == Track.empty {
-            return 3
+            return 5
         }
         return 4
     }

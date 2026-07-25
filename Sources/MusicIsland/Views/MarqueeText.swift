@@ -8,6 +8,9 @@ struct MarqueeText: View {
     var font: Font
     var color: Color
     var alignment: Alignment = .leading
+    /// Scrolling is paused while the island is hidden: the view tree stays
+    /// alive off-screen, and an animation there costs the same as a visible one.
+    var isActive: Bool = true
     var startDelay: Double = 1.2
     var pointsPerSecond: Double = 30
 
@@ -63,6 +66,7 @@ struct MarqueeText: View {
         .onChange(of: text) { _ in restart() }
         .onChange(of: textMeasurement) { _ in restart() }
         .onChange(of: containerWidth) { _ in restart() }
+        .onChange(of: isActive) { _ in restart() }
         .onAppear { restart() }
     }
 
@@ -74,19 +78,19 @@ struct MarqueeText: View {
         stop.disablesAnimations = true
         withTransaction(stop) { animate = false }
 
-        guard isOverflowing else { return }
+        guard isActive, isOverflowing else { return }
         scheduleScroll(generation: generation)
     }
 
     private func scheduleScroll(generation: Int) {
         let duration = max(2.0, Double(overflow) / pointsPerSecond)
         DispatchQueue.main.asyncAfter(deadline: .now() + startDelay) {
-            guard generation == animationGeneration, isOverflowing else { return }
+            guard generation == animationGeneration, isActive, isOverflowing else { return }
             withAnimation(.easeInOut(duration: duration)) {
                 animate = true
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + duration + startDelay) {
-                guard generation == animationGeneration, isOverflowing else { return }
+                guard generation == animationGeneration, isActive, isOverflowing else { return }
 
                 var reset = Transaction()
                 reset.disablesAnimations = true
