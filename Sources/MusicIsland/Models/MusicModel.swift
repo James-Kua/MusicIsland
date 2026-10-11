@@ -82,10 +82,12 @@ final class MusicModel: ObservableObject {
         // Advance the displayed position from a smooth local clock between polls
         // so the scrubber ticks continuously instead of hopping each refresh.
         displayTickTask = Task { @MainActor [weak self] in
+            var tickCount = 0
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                try? await Task.sleep(nanoseconds: 125_000_000)
                 guard let self else { return }
-                self.tickDisplay()
+                tickCount += 1
+                self.tickDisplay(updateScrubber: tickCount.isMultiple(of: 2))
             }
         }
     }
@@ -97,13 +99,13 @@ final class MusicModel: ObservableObject {
         return duration > 0 ? min(projected, duration) : projected
     }
 
-    private func tickDisplay() {
+    private func tickDisplay(updateScrubber: Bool) {
         // Nothing moves while paused: the projected position is pinned to the
         // anchor, and seeking updates the position and lyric on the spot.
         guard track.isPlaying else { return }
         let value = projectedElapsed
         playbackElapsed = value
-        if abs(elapsed - value) > 0.05 {
+        if updateScrubber && abs(elapsed - value) > 0.05 {
             elapsed = value
         }
         updateLyric()

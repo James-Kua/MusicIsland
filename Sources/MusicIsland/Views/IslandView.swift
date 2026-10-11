@@ -405,7 +405,7 @@ struct IslandView: View {
             .transition(.opacity)
         }
         .frame(height: position == .current ? 18 : 14)
-        .animation(.easeInOut(duration: 0.28), value: text)
+        .animation(.easeInOut(duration: 0.16), value: text)
         .shimmering(active: loading && isVisible)
     }
 
