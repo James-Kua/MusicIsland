@@ -14,7 +14,15 @@ enum DebugLog {
         queue.async { append(data) }
     }
 
+    /// The log is only ever read for its recent tail, so start it over rather
+    /// than letting an app that runs for weeks grow it without bound.
+    private static let maximumSize: UInt64 = 2_000_000
+
     private static func append(_ data: Data) {
+        if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber,
+           size.uint64Value > maximumSize {
+            try? FileManager.default.removeItem(at: url)
+        }
         if FileManager.default.fileExists(atPath: url.path),
            let handle = try? FileHandle(forWritingTo: url) {
             _ = try? handle.seekToEnd()

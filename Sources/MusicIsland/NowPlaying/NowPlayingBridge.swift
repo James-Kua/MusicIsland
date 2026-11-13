@@ -30,7 +30,9 @@ final class NowPlayingBridge: @unchecked Sendable {
     private let getPID: GetNowPlayingApplicationPID?
     private let helper = NowPlayingHelperProcess()
     private var observers: [NSObjectProtocol] = []
+    private var wakeObservers: [NSObjectProtocol] = []
     private var changeCoalesceTask: DispatchWorkItem?
+    private var wakeTask: DispatchWorkItem?
     private var cachedSnapshot = NowPlayingSnapshot(track: .empty, elapsed: 0, duration: 0, artworkData: nil)
     /// Written on the main thread when a helper line arrives, read from the
     /// background poll, so both sides go through this lock.
@@ -62,10 +64,25 @@ final class NowPlayingBridge: @unchecked Sendable {
         helper.onPayload = { [weak self] payload in
             self?.applyHelperPayload(payload)
         }
+
+        // Sleep is what most reliably breaks now-playing reads, so treat every
+        // wake as a reason to start over rather than trusting what was running.
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        wakeObservers = [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.screensDidWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification
+        ].map { name in
+            workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.handleWake()
+            }
+        }
     }
 
     deinit {
         changeCoalesceTask?.cancel()
+        wakeTask?.cancel()
+        wakeObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         observers.forEach(NotificationCenter.default.removeObserver)
         helper.stop()
         if let handle {
@@ -79,6 +96,26 @@ final class NowPlayingBridge: @unchecked Sendable {
         helperLock.lock()
         defer { helperLock.unlock() }
         return helper.isUnavailable && helperSnapshot == nil
+    }
+
+    /// Several wake notifications arrive together, and MediaRemote needs a
+    /// moment to come back, so act once, shortly after the last of them.
+    private func handleWake() {
+        wakeTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            DebugLog.write("system woke; refreshing now-playing source")
+            self.helper.handleWake()
+            self.onNowPlayingChange?()
+        }
+        wakeTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: task)
+    }
+
+    /// Called when the user opens the island while it shows no track, so a
+    /// helper that wrongly reports "nothing playing" is replaced right away.
+    func recheckIfIdle() {
+        helper.recheckIfIdle()
     }
 
     private func applyHelperPayload(_ payload: NowPlayingHelperProcess.Payload) {
@@ -140,30 +177,32 @@ final class NowPlayingBridge: @unchecked Sendable {
 
     func currentTrack() -> NowPlayingSnapshot {
         guard let copyInfo else {
-            helper.startIfNeeded()
+            helper.startIfNeeded(playerRunning: NetEaseController.runningApplication() != nil)
             return streamedSnapshot() ?? netEaseFallback() ?? cachedSnapshot
         }
 
         let group = DispatchGroup()
-        var info = NSDictionary()
-        var pid: Int32 = 0
+        // The replies land on `callbackQueue` and can arrive after the wait
+        // below has given up, so they are handed over through a locked box.
+        let reply = ReadReply()
 
         group.enter()
         copyInfo(callbackQueue) { dictionary in
-            info = dictionary
+            reply.set(info: dictionary)
             group.leave()
         }
 
         if let getPID {
             group.enter()
             getPID(callbackQueue) { value in
-                pid = value
+                reply.set(pid: value)
                 group.leave()
             }
         }
 
         // One shared budget for both replies, rather than one per callback.
         _ = group.wait(timeout: .now() + 0.8)
+        let (info, pid) = reply.values()
 
         let title = stringValue(info, keys: ["kMRMediaRemoteNowPlayingInfoTitle", "title"])
         let artist = stringValue(info, keys: ["kMRMediaRemoteNowPlayingInfoArtist", "artist"])
@@ -183,7 +222,7 @@ final class NowPlayingBridge: @unchecked Sendable {
             // read. The helper answers both cases; while it is starting up, an
             // established snapshot keeps standing briefly, because a blank read
             // resets the track identity and wipes the lyric already on screen.
-            helper.startIfNeeded()
+            helper.startIfNeeded(playerRunning: NetEaseController.runningApplication() != nil)
             if let streamed = streamedSnapshot() {
                 lastPopulatedRead = Date()
                 cachedSnapshot = streamed
@@ -327,4 +366,29 @@ final class NowPlayingBridge: @unchecked Sendable {
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss Z"
         return formatter
     }()
+}
+
+/// Carries one MediaRemote read from its callback queue to the reader.
+private final class ReadReply: @unchecked Sendable {
+    private let lock = NSLock()
+    private var info = NSDictionary()
+    private var pid: Int32 = 0
+
+    func set(info: NSDictionary) {
+        lock.lock()
+        self.info = info
+        lock.unlock()
+    }
+
+    func set(pid: Int32) {
+        lock.lock()
+        self.pid = pid
+        lock.unlock()
+    }
+
+    func values() -> (NSDictionary, Int32) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (info, pid)
+    }
 }

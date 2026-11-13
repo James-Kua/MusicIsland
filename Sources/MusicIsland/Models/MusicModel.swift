@@ -28,6 +28,11 @@ final class MusicModel: ObservableObject {
             // Opening the island is the moment the lyric actually matters, so
             // take it as a cue to pick up a lookup that ran out of retries.
             retryLyricsIfStalled()
+            // Likewise, an island that opens on "nothing playing" is worth a
+            // second look in case the now-playing source has gone stale.
+            if track.isPlaceholder {
+                nowPlaying.recheckIfIdle()
+            }
         }
     }
 

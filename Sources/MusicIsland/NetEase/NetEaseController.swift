@@ -54,7 +54,17 @@ enum NetEaseController {
         dlclose(handle)
     }
 
+    private static let seekQueue = DispatchQueue(label: "app.musicisland.seek", qos: .userInitiated)
+
+    /// The interpreter takes a second or so to start, and seeks come from the
+    /// main thread (dragging the scrubber), so this must not be waited on there.
     private static func runInterpreterSeek(to target: TimeInterval) {
+        seekQueue.async {
+            launchInterpreterSeek(to: target)
+        }
+    }
+
+    private static func launchInterpreterSeek(to target: TimeInterval) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
         process.arguments = [
@@ -70,8 +80,8 @@ enum NetEaseController {
             sendCommand(24, ["kMRMediaRemoteOptionPlaybackPosition": \(target)])
             """
         ]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
             process.waitUntilExit()
